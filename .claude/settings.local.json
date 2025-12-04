@@ -10,7 +10,11 @@
       "Bash(ffmpeg:*)",
       "Bash(timeout /t 3 /nobreak)",
       "Bash(nul)",
-      "Bash(ping:*)"
+      "Bash(ping:*)",
+      "Bash(git config:*)",
+      "Bash(git commit:*)",
+      "Bash(git branch:*)",
+      "Bash(git remote add:*)"
     ],
     "deny": [],
     "ask": []
