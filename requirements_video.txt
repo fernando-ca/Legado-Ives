@@ -1,0 +1,18 @@
+# Video Transcription Project - Dependencies
+
+# Video processing
+yt-dlp==2024.10.7
+ffmpeg-python==0.2.0
+
+# Transcription (Whisper)
+openai-whisper==20231117
+torch==2.1.0
+torchaudio==2.1.0
+
+# Web interface
+Flask==3.0.0
+Werkzeug==3.0.0
+
+# Utilities
+requests==2.31.0
+python-dotenv==1.0.0

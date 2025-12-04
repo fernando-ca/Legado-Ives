@@ -1,0 +1,58 @@
+═══════════════════════════════════════════════════════════════
+  📚 CONVERSOR PDF → EPUB - INÍCIO RÁPIDO
+═══════════════════════════════════════════════════════════════
+
+🎯 ESTRUTURA DE PASTAS CRIADA:
+
+   test_pdfs/       ← COLOQUE SEUS PDFs AQUI
+   test_covers/     ← COLOQUE CAPAS AQUI (opcional)
+   output_epubs/    ← EPUBs gerados aparecerão aqui
+
+───────────────────────────────────────────────────────────────
+
+⚙️  PASSOS PARA COMEÇAR:
+
+1️⃣  INSTALAR PYTHON (se ainda não tiver)
+   → Microsoft Store: buscar "Python 3.12"
+   → Ou baixar de: https://www.python.org/downloads/
+   ⚠️  IMPORTANTE: Marcar "Add Python to PATH"
+
+2️⃣  INSTALAR DEPENDÊNCIAS
+   Abrir terminal nesta pasta e executar:
+
+   pip install -r requirements.txt
+
+   ou:
+
+   py -m pip install -r requirements.txt
+
+3️⃣  COLOCAR PDF NA PASTA test_pdfs/
+   → Copiar seu PDF para a pasta test_pdfs/
+
+4️⃣  CONVERTER!
+
+   OPÇÃO A - Conversão simples:
+   python main.py test_pdfs/seu_livro.pdf
+
+   OPÇÃO B - Com capa:
+   python main.py test_pdfs/seu_livro.pdf -c test_covers/capa.jpg
+
+   OPÇÃO C - Completo:
+   python main.py test_pdfs/seu_livro.pdf -t "Título" -a "Autor" -c test_covers/capa.jpg
+
+5️⃣  VERIFICAR RESULTADO
+   → EPUB estará na pasta raiz ou em output_epubs/
+   → Abrir com Calibre, Google Play Livros, etc.
+
+───────────────────────────────────────────────────────────────
+
+🧪 TESTAR SEM PDF (testar instalação):
+
+   python test_converter.py
+
+───────────────────────────────────────────────────────────────
+
+📖 GUIA COMPLETO:
+   Ver arquivo: GUIA_DE_INSTALACAO.md
+
+═══════════════════════════════════════════════════════════════

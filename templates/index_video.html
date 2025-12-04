@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transcritor de Vídeos → Texto</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 800px;
+            width: 100%;
+            padding: 40px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2em;
+            text-align: center;
+        }
+
+        .subtitle {
+            color: #666;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 0.9em;
+        }
+
+        .input-area {
+            background: #f8f9ff;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            color: #667eea;
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 0.95em;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-hint {
+            font-size: 0.8em;
+            color: #999;
+            margin-top: 5px;
+        }
+
+        .model-options {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .model-option {
+            padding: 10px;
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-align: center;
+        }
+
+        .model-option:hover {
+            border-color: #667eea;
+            background: #f8f9ff;
+        }
+
+        .model-option.selected {
+            border-color: #667eea;
+            background: #667eea;
+            color: white;
+        }
+
+        .model-name {
+            font-weight: 600;
+            font-size: 0.9em;
+        }
+
+        .model-desc {
+            font-size: 0.75em;
+            margin-top: 3px;
+            opacity: 0.8;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .progress {
+            display: none;
+            margin-top: 20px;
+        }
+
+        .progress.show {
+            display: block;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 10px;
+            background: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.5s ease;
+        }
+
+        .progress-text {
+            text-align: center;
+            color: #667eea;
+            font-weight: 600;
+            font-size: 0.9em;
+        }
+
+        .progress-stage {
+            text-align: center;
+            color: #999;
+            font-size: 0.85em;
+            margin-top: 5px;
+        }
+
+        .result-area {
+            display: none;
+            margin-top: 20px;
+            padding: 25px;
+            background: #f8f9ff;
+            border-radius: 15px;
+        }
+
+        .result-area.show {
+            display: block;
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .result-title {
+            color: #667eea;
+            font-size: 1.2em;
+            font-weight: 600;
+        }
+
+        .result-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-action {
+            padding: 8px 16px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background 0.3s;
+        }
+
+        .btn-action:hover {
+            background: #764ba2;
+        }
+
+        .video-info {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 0.9em;
+        }
+
+        .video-info-item {
+            margin-bottom: 5px;
+            color: #666;
+        }
+
+        .video-info-item strong {
+            color: #333;
+        }
+
+        .transcription-box {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-size: 0.95em;
+            line-height: 1.8;
+            color: #333;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .alert.show {
+            display: block;
+        }
+
+        .alert-success {
+            background: #d1fae5;
+            color: #065f46;
+            border-left: 4px solid #10b981;
+        }
+
+        .alert-error {
+            background: #fee2e2;
+            color: #991b1b;
+            border-left: 4px solid #ef4444;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #e0e0e0;
+            color: #999;
+            font-size: 0.85em;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            background: #10b981;
+            color: white;
+            border-radius: 12px;
+            font-size: 0.75em;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 Transcritor de Vídeos</h1>
+        <p class="subtitle">Converta entrevistas e vídeos em texto automaticamente usando IA <span class="badge">GRÁTIS</span></p>
+
+        <div class="input-area">
+            <div class="form-group">
+                <label for="video-url">🔗 URL do Vídeo</label>
+                <input type="text" id="video-url" placeholder="Cole a URL do vídeo aqui (YouTube, Vimeo, sites de notícias, etc.)">
+                <div class="form-hint">Exemplo: https://gandramartins.adv.br/entrevistas/...</div>
+            </div>
+
+            <div class="form-group">
+                <label>⚙️ Modelo de Transcrição</label>
+                <div class="model-options">
+                    <div class="model-option" data-model="tiny">
+                        <div class="model-name">Tiny</div>
+                        <div class="model-desc">Rápido</div>
+                    </div>
+                    <div class="model-option selected" data-model="small">
+                        <div class="model-name">Small ⭐</div>
+                        <div class="model-desc">Recomendado</div>
+                    </div>
+                    <div class="model-option" data-model="medium">
+                        <div class="model-name">Medium</div>
+                        <div class="model-desc">Mais preciso</div>
+                    </div>
+                    <div class="model-option" data-model="large">
+                        <div class="model-name">Large</div>
+                        <div class="model-desc">Melhor</div>
+                    </div>
+                </div>
+                <div class="form-hint">Small é o equilíbrio ideal entre velocidade e precisão para português</div>
+            </div>
+        </div>
+
+        <button class="btn btn-primary" id="btn-transcrever">
+            ▶️ Iniciar Transcrição
+        </button>
+
+        <div class="progress" id="progress">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <div class="progress-text" id="progress-text">Iniciando...</div>
+            <div class="progress-stage" id="progress-stage"></div>
+        </div>
+
+        <div class="alert alert-error" id="alert-error">
+            ❌ <span id="error-message">Erro ao processar o vídeo.</span>
+        </div>
+
+        <div class="result-area" id="result-area">
+            <div class="result-header">
+                <div class="result-title">✅ Transcrição Concluída</div>
+                <div class="result-actions">
+                    <button class="btn-action" id="btn-copy">📋 Copiar</button>
+                    <button class="btn-action" id="btn-download">⬇️ Baixar TXT</button>
+                </div>
+            </div>
+
+            <div class="video-info" id="video-info"></div>
+
+            <div class="transcription-box" id="transcription-box"></div>
+        </div>
+
+        <div class="footer">
+            Transcrito com OpenAI Whisper • 100% Gratuito • Português do Brasil
+        </div>
+    </div>
+
+    <script>
+        const videoUrlInput = document.getElementById('video-url');
+        const btnTranscrever = document.getElementById('btn-transcrever');
+        const progress = document.getElementById('progress');
+        const progressFill = document.getElementById('progress-fill');
+        const progressText = document.getElementById('progress-text');
+        const progressStage = document.getElementById('progress-stage');
+        const alertError = document.getElementById('alert-error');
+        const errorMessage = document.getElementById('error-message');
+        const resultArea = document.getElementById('result-area');
+        const videoInfo = document.getElementById('video-info');
+        const transcriptionBox = document.getElementById('transcription-box');
+        const btnCopy = document.getElementById('btn-copy');
+        const btnDownload = document.getElementById('btn-download');
+        const modelOptions = document.querySelectorAll('.model-option');
+
+        let selectedModel = 'small';
+        let currentTaskId = null;
+        let downloadFilename = null;
+
+        // Seleção de modelo
+        modelOptions.forEach(option => {
+            option.addEventListener('click', () => {
+                modelOptions.forEach(o => o.classList.remove('selected'));
+                option.classList.add('selected');
+                selectedModel = option.dataset.model;
+            });
+        });
+
+        // Iniciar transcrição
+        btnTranscrever.addEventListener('click', async () => {
+            const videoUrl = videoUrlInput.value.trim();
+
+            if (!videoUrl) {
+                showError('Por favor, insira a URL do vídeo.');
+                videoUrlInput.focus();
+                return;
+            }
+
+            // Validação básica de URL
+            try {
+                new URL(videoUrl);
+            } catch {
+                showError('URL inválida. Verifique e tente novamente.');
+                return;
+            }
+
+            hideError();
+            resultArea.classList.remove('show');
+            progress.classList.add('show');
+            btnTranscrever.disabled = true;
+            progressFill.style.width = '0%';
+            progressText.textContent = 'Iniciando...';
+            progressStage.textContent = '';
+
+            try {
+                // Iniciar transcrição
+                const response = await fetch('/transcrever', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        video_url: videoUrl,
+                        model_size: selectedModel
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.sucesso) {
+                    currentTaskId = data.task_id;
+                    // Monitorar progresso
+                    monitorProgress(currentTaskId);
+                } else {
+                    showError(data.erro || 'Erro ao iniciar transcrição');
+                    progress.classList.remove('show');
+                    btnTranscrever.disabled = false;
+                }
+
+            } catch (error) {
+                showError('Erro ao conectar com o servidor: ' + error.message);
+                progress.classList.remove('show');
+                btnTranscrever.disabled = false;
+            }
+        });
+
+        // Monitorar progresso
+        async function monitorProgress(taskId) {
+            const interval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/progresso/${taskId}`);
+                    const data = await response.json();
+
+                    if (data.status === 'downloading') {
+                        progressFill.style.width = '20%';
+                        progressText.textContent = 'Baixando vídeo...';
+                        progressStage.textContent = data.message;
+                    } else if (data.status === 'extracting') {
+                        progressFill.style.width = '40%';
+                        progressText.textContent = 'Extraindo áudio...';
+                        progressStage.textContent = data.message;
+                    } else if (data.status === 'transcribing') {
+                        progressFill.style.width = '70%';
+                        progressText.textContent = 'Transcrevendo...';
+                        progressStage.textContent = data.message;
+                    } else if (data.status === 'saving') {
+                        progressFill.style.width = '90%';
+                        progressText.textContent = 'Salvando...';
+                        progressStage.textContent = data.message;
+                    } else if (data.status === 'completed') {
+                        clearInterval(interval);
+                        progressFill.style.width = '100%';
+                        progressText.textContent = 'Concluído!';
+                        progressStage.textContent = '';
+
+                        // Mostrar resultado
+                        showResult(data);
+
+                        setTimeout(() => {
+                            progress.classList.remove('show');
+                            btnTranscrever.disabled = false;
+                        }, 1000);
+                    } else if (data.status === 'error') {
+                        clearInterval(interval);
+                        showError(data.message);
+                        progress.classList.remove('show');
+                        btnTranscrever.disabled = false;
+                    }
+                } catch (error) {
+                    clearInterval(interval);
+                    showError('Erro ao monitorar progresso: ' + error.message);
+                    progress.classList.remove('show');
+                    btnTranscrever.disabled = false;
+                }
+            }, 2000); // Verificar a cada 2 segundos
+        }
+
+        // Mostrar resultado
+        function showResult(data) {
+            // Informações do vídeo
+            const info = data.video_info;
+            videoInfo.innerHTML = `
+                <div class="video-info-item"><strong>🎥 Título:</strong> ${info.title}</div>
+                <div class="video-info-item"><strong>⏱️ Duração:</strong> ${info.duration} minutos</div>
+                <div class="video-info-item"><strong>👤 Autor:</strong> ${info.uploader}</div>
+            `;
+
+            // Transcrição
+            transcriptionBox.textContent = data.transcription;
+
+            // Arquivo para download
+            downloadFilename = data.output_file;
+
+            // Mostrar área de resultado
+            resultArea.classList.add('show');
+
+            // Scroll suave até o resultado
+            resultArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        // Copiar texto
+        btnCopy.addEventListener('click', () => {
+            const text = transcriptionBox.textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                btnCopy.textContent = '✅ Copiado!';
+                setTimeout(() => {
+                    btnCopy.textContent = '📋 Copiar';
+                }, 2000);
+            }).catch(err => {
+                showError('Erro ao copiar: ' + err.message);
+            });
+        });
+
+        // Download
+        btnDownload.addEventListener('click', () => {
+            if (downloadFilename) {
+                window.location.href = '/download/' + downloadFilename;
+            }
+        });
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            alertError.classList.add('show');
+            setTimeout(() => alertError.classList.remove('show'), 8000);
+        }
+
+        function hideError() {
+            alertError.classList.remove('show');
+        }
+
+        // Enter para enviar
+        videoUrlInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                btnTranscrever.click();
+            }
+        });
+    </script>
+</body>
+</html>

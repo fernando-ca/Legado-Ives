@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+
+# EPUBs gerados (manter apenas os de exemplo se necessário)
+*.epub
+
+# Arquivos temporários
+*.tmp
+*.log
+nul
+
+# Imagens extraídas/temporárias
+capa_extraida.jpeg
+capa_sulco_teste.jpg
+
+# Diretórios de saída
+output_epubs/
+conversoes_web/
+transcricoes_web/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Sistema
+Thumbs.db
+.DS_Store

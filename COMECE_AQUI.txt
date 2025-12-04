@@ -1,0 +1,201 @@
+================================================================================
+🎬 TRANSCRITOR DE VÍDEOS PARA TEXTO - COMECE AQUI!
+================================================================================
+
+Olá! Seu projeto está PRONTO! 🎉
+
+Este sistema converte vídeos de entrevistas em texto automaticamente usando
+Inteligência Artificial (OpenAI Whisper) - 100% GRATUITO!
+
+================================================================================
+⚡ INÍCIO RÁPIDO (3 PASSOS)
+================================================================================
+
+PASSO 1: INSTALAR FFmpeg
+-------------------------
+Você precisa do FFmpeg instalado no seu computador.
+
+→ Opção Fácil (Chocolatey):
+  Abra o CMD como administrador e execute:
+  choco install ffmpeg
+
+→ Opção Manual:
+  1. Baixe: https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
+  2. Extraia para C:\ffmpeg
+  3. Adicione C:\ffmpeg\bin ao PATH do Windows
+
+
+PASSO 2: INSTALAR DEPENDÊNCIAS PYTHON
+--------------------------------------
+Clique duas vezes em: instalar_dependencias.bat
+
+OU execute no terminal:
+  pip install -r requirements_video.txt
+
+⏱️ IMPORTANTE: Isso leva 5-10 minutos (o PyTorch é grande ~2GB)
+
+
+PASSO 3: INICIAR O SERVIDOR
+----------------------------
+Clique duas vezes em: iniciar_servidor.bat
+
+OU execute no terminal:
+  python app_video.py
+
+Depois abra seu navegador em: http://localhost:5000
+
+================================================================================
+🎯 COMO USAR
+================================================================================
+
+1. Copie a URL do vídeo que você quer transcrever
+   Exemplo: https://gandramartins.adv.br/entrevistas/programa-sonho-meu-com-walter-feldman-10-10-2025/
+
+2. Cole no campo "URL do Vídeo"
+
+3. Escolha o modelo (recomendado: Small ⭐)
+   - Tiny: Muito rápido, menor precisão
+   - Small: RECOMENDADO - Equilíbrio perfeito
+   - Medium: Mais lento, excelente precisão
+   - Large: Muito lento, melhor precisão
+
+4. Clique em "Iniciar Transcrição"
+
+5. Aguarde o processamento (acompanhe o progresso)
+   Para 30 min de vídeo = ~15 min de processamento (modelo Small)
+
+6. Pronto! Copie ou baixe o texto
+
+================================================================================
+💰 CUSTO
+================================================================================
+
+→ ZERO REAIS! 100% GRATUITO!
+→ Processamento local (no seu computador)
+→ Sem limites de uso
+→ Privacidade total (não envia dados para nuvem)
+
+================================================================================
+🌐 SITES SUPORTADOS
+================================================================================
+
+O sistema baixa vídeos de mais de 1000 sites, incluindo:
+✅ YouTube
+✅ Vimeo
+✅ Facebook
+✅ Twitter/X
+✅ Instagram
+✅ Sites de notícias (como gandramartins.adv.br)
+✅ E muitos outros!
+
+================================================================================
+⏱️ TEMPO DE PROCESSAMENTO
+================================================================================
+
+Para uma entrevista de 30 MINUTOS:
+
+Modelo Small (RECOMENDADO):
+- Sem GPU: ~15 minutos
+- Com GPU NVIDIA: ~2 minutos
+
+Modelo Medium:
+- Sem GPU: ~30 minutos
+- Com GPU NVIDIA: ~3 minutos
+
+Modelo Large (melhor qualidade):
+- Sem GPU: ~60 minutos
+- Com GPU NVIDIA: ~5 minutos
+
+================================================================================
+📁 ONDE FICAM OS ARQUIVOS
+================================================================================
+
+Após transcrever vídeos, tudo fica salvo em:
+
+transcricoes_web/
+├── uploads/    - Vídeos baixados
+├── audios/     - Áudios extraídos
+└── texts/      - Transcrições em TXT (RESULTADO FINAL)
+
+================================================================================
+🔧 PROBLEMAS COMUNS
+================================================================================
+
+❌ Erro: "FFmpeg not found"
+✅ Solução: Instale o FFmpeg (Passo 1)
+
+❌ Erro: "No module named 'whisper'"
+✅ Solução: Execute: pip install openai-whisper torch
+
+❌ Transcrição muito lenta
+✅ Solução: Use o modelo "small" ou "tiny"
+
+❌ Erro ao baixar vídeo
+✅ Solução: Atualize o yt-dlp: pip install --upgrade yt-dlp
+
+❌ Erro de memória
+✅ Solução: Use modelo menor ("small" ou "tiny")
+
+================================================================================
+📚 DOCUMENTAÇÃO COMPLETA
+================================================================================
+
+→ README_VIDEO_TRANSCRIBER.md - Visão geral e início rápido
+→ GUIA_TRANSCRITOR.md - Guia completo com todas as opções
+
+================================================================================
+🎬 EXEMPLO PRÁTICO
+================================================================================
+
+Vamos transcrever a entrevista do Walter Feldman:
+
+1. Execute: iniciar_servidor.bat
+2. Abra: http://localhost:5000
+3. Cole: https://gandramartins.adv.br/entrevistas/programa-sonho-meu-com-walter-feldman-10-10-2025/
+4. Escolha: Small
+5. Clique: Iniciar Transcrição
+6. Aguarde ~15-20 minutos
+7. Pronto! Texto da entrevista completa
+
+================================================================================
+✨ CARACTERÍSTICAS
+================================================================================
+
+✅ Interface web moderna e bonita
+✅ Altíssima precisão em português brasileiro
+✅ Download automático de vídeos
+✅ 4 modelos de IA para escolher
+✅ Progresso em tempo real
+✅ Copiar texto para área de transferência
+✅ Download em arquivo TXT
+✅ 100% gratuito e ilimitado
+✅ Privacidade total (tudo local)
+
+================================================================================
+🚀 BORA COMEÇAR!
+================================================================================
+
+1. Instale as dependências (se ainda não instalou):
+   → Clique duas vezes em: instalar_dependencias.bat
+
+2. Teste se está tudo OK:
+   → Execute: python testar_instalacao.py
+
+3. Inicie o servidor:
+   → Clique duas vezes em: iniciar_servidor.bat
+
+4. Acesse no navegador:
+   → http://localhost:5000
+
+5. Cole a URL de um vídeo e transcreva!
+
+================================================================================
+
+Dúvidas? Consulte os arquivos de documentação:
+- README_VIDEO_TRANSCRIBER.md
+- GUIA_TRANSCRITOR.md
+
+================================================================================
+Desenvolvido com ❤️ usando OpenAI Whisper
+100% Gratuito • Português do Brasil • Alta Precisão
+================================================================================

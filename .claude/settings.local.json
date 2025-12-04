@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(findstr:*)",
+      "Bash(py --version)",
+      "Bash(dir:*)",
+      "Bash(python:*)",
+      "Bash(set:*)",
+      "Bash(cmd /c \"chcp 65001 >nul && python converter_completo_auto.py test_pdfs\\LIVRO-Uma-breve-teoria-do-Poder.pdf\")",
+      "Bash(ffmpeg:*)",
+      "Bash(timeout /t 3 /nobreak)",
+      "Bash(nul)",
+      "Bash(ping:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
