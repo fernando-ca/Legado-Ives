@@ -1,8 +1,24 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --burgundy-dark: #3D1518;
+  --burgundy-medium: #5C1515;
+  --burgundy-light: #8B2323;
+  --gold: #C9A962;
+  --gold-light: #D4B978;
+  --gold-dark: #B89A52;
+}
+
 body {
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, var(--burgundy-dark) 0%, var(--burgundy-medium) 50%, var(--burgundy-light) 100%);
+  font-family: 'Inter', sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Playfair Display', serif;
 }

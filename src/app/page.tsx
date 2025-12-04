@@ -99,17 +99,17 @@ export default function Home() {
     <main className="min-h-screen p-4 md:p-8 flex items-center justify-center">
       <div className="w-full max-w-4xl">
         {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-3xl md:text-4xl font-bold text-white mb-2">
-            Conversor PDF → EPUB
+        <div className="text-center mb-10">
+          <h1 className="text-4xl md:text-5xl font-semibold text-white mb-3 tracking-tight">
+            Conversor <span className="text-[#C9A962]">PDF</span> → <span className="text-[#C9A962]">EPUB</span>
           </h1>
-          <p className="text-white/80">
+          <p className="text-white/80 text-lg">
             Converta seus livros em PDF para formato EPUB
           </p>
         </div>
 
         {/* Card Principal */}
-        <div className="bg-white rounded-2xl shadow-2xl p-6 md:p-8">
+        <div className="bg-white rounded-2xl shadow-2xl p-6 md:p-8 border border-[#C9A962]/20">
           {!pdfData ? (
             /* Upload Area */
             <div
@@ -118,8 +118,8 @@ export default function Home() {
               onDragLeave={() => setDragActive(false)}
               className={`border-3 border-dashed rounded-xl p-12 text-center transition-all cursor-pointer
                 ${dragActive
-                  ? 'border-purple-500 bg-purple-50'
-                  : 'border-gray-300 hover:border-purple-400 hover:bg-gray-50'
+                  ? 'border-[#C9A962] bg-[#FDF8E8]'
+                  : 'border-gray-300 hover:border-[#C9A962] hover:bg-[#FDF8E8]/50'
                 }
                 ${loading ? 'opacity-50 pointer-events-none' : ''}`}
               onClick={() => document.getElementById('fileInput')?.click()}
@@ -134,7 +134,7 @@ export default function Home() {
 
               {loading ? (
                 <div className="flex flex-col items-center">
-                  <div className="w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mb-4" />
+                  <div className="w-12 h-12 border-4 border-[#C9A962] border-t-transparent rounded-full animate-spin mb-4" />
                   <p className="text-gray-600">Processando PDF...</p>
                 </div>
               ) : (
@@ -179,7 +179,7 @@ export default function Home() {
                       type="text"
                       value={pdfData.title}
                       onChange={(e) => setPdfData({ ...pdfData, title: e.target.value })}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-lg"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#C9A962] focus:border-transparent text-lg"
                     />
                   </div>
 
@@ -191,7 +191,7 @@ export default function Home() {
                       type="text"
                       value={pdfData.author}
                       onChange={(e) => setPdfData({ ...pdfData, author: e.target.value })}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-lg"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#C9A962] focus:border-transparent text-lg"
                     />
                   </div>
 
@@ -207,7 +207,7 @@ export default function Home() {
                 <button
                   onClick={handleConvert}
                   disabled={converting}
-                  className="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 text-white py-4 px-6 rounded-lg font-semibold text-lg hover:from-purple-700 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="flex-1 bg-[#C9A962] hover:bg-[#B89A52] text-white py-4 px-6 rounded-lg font-semibold text-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg"
                 >
                   {converting ? (
                     <>
@@ -223,7 +223,7 @@ export default function Home() {
 
                 <button
                   onClick={handleReset}
-                  className="px-6 py-4 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50 transition-all"
+                  className="px-6 py-4 border-2 border-[#8B2323] rounded-lg font-semibold text-[#5C1515] hover:bg-[#8B2323]/10 transition-all"
                 >
                   Novo PDF
                 </button>
@@ -233,15 +233,15 @@ export default function Home() {
 
           {/* Erro */}
           {error && (
-            <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
+            <div className="mt-4 p-4 bg-red-50 border border-[#8B2323]/30 rounded-lg text-[#8B2323]">
               {error}
             </div>
           )}
         </div>
 
         {/* Footer */}
-        <p className="text-center text-white/60 mt-6 text-sm">
-          Legado Ives - Conversor de PDF para EPUB
+        <p className="text-center text-white/70 mt-8 text-sm tracking-wide">
+          <span className="text-[#C9A962]">Legado Ives</span> — Conversor de PDF para EPUB
         </p>
       </div>
     </main>
