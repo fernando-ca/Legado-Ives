@@ -5,6 +5,9 @@ import './globals.css'
 export const metadata: Metadata = {
   title: 'Conversor PDF para EPUB - Legado Ives',
   description: 'Converta seus PDFs para EPUB de forma simples e rápida',
+  icons: {
+    icon: '/favicon.svg',
+  },
 }
 
 export default function RootLayout({
