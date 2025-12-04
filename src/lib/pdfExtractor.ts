@@ -1,16 +1,15 @@
-import * as pdfjsLib from 'pdfjs-dist';
-
-// Configurar worker com versão específica que existe no CDN
-if (typeof window !== 'undefined') {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
-}
-
 export interface PdfContent {
   text: string[];
   pageCount: number;
 }
 
 export async function extractTextFromPdf(file: File): Promise<PdfContent> {
+  // Importar PDF.js dinamicamente apenas no cliente
+  const pdfjsLib = await import('pdfjs-dist');
+
+  // Configurar worker
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
+
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
 
@@ -37,58 +36,37 @@ export async function extractTextFromPdf(file: File): Promise<PdfContent> {
 }
 
 export async function extractImagesFromPdf(file: File): Promise<string[]> {
+  // Para extração de imagens, vamos usar uma abordagem mais simples
+  // Renderizar a primeira página como imagem (capa)
+  const pdfjsLib = await import('pdfjs-dist');
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
+
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   const images: string[] = [];
 
-  // Extrair imagens das primeiras 3 páginas
-  const pagesToCheck = Math.min(3, pdf.numPages);
+  try {
+    // Renderizar primeira página como capa
+    const page = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 1.5 });
 
-  for (let i = 1; i <= pagesToCheck; i++) {
-    const page = await pdf.getPage(i);
-    const operatorList = await page.getOperatorList();
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
 
-    for (let j = 0; j < operatorList.fnArray.length; j++) {
-      if (operatorList.fnArray[j] === pdfjsLib.OPS.paintImageXObject) {
-        const imgName = operatorList.argsArray[j][0];
-        try {
-          const img = await page.objs.get(imgName);
-          if (img && img.data) {
-            const canvas = document.createElement('canvas');
-            canvas.width = img.width;
-            canvas.height = img.height;
-            const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      await page.render({
+        canvasContext: ctx,
+        viewport: viewport
+      }).promise;
 
-            if (ctx) {
-              const imageData = ctx.createImageData(img.width, img.height);
-
-              // Converter dados da imagem
-              if (img.data.length === img.width * img.height * 4) {
-                imageData.data.set(img.data);
-              } else if (img.data.length === img.width * img.height * 3) {
-                // RGB para RGBA
-                for (let k = 0; k < img.width * img.height; k++) {
-                  imageData.data[k * 4] = img.data[k * 3];
-                  imageData.data[k * 4 + 1] = img.data[k * 3 + 1];
-                  imageData.data[k * 4 + 2] = img.data[k * 3 + 2];
-                  imageData.data[k * 4 + 3] = 255;
-                }
-              }
-
-              ctx.putImageData(imageData, 0, 0);
-              const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-
-              // Só adicionar imagens maiores (provavelmente capas)
-              if (img.width > 100 && img.height > 100) {
-                images.push(dataUrl);
-              }
-            }
-          }
-        } catch (e) {
-          // Ignorar erros de extração de imagem
-        }
-      }
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+      images.push(dataUrl);
     }
+  } catch (e) {
+    console.error('Erro ao extrair capa:', e);
   }
 
   return images;
