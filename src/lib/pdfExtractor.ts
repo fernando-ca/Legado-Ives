@@ -1,14 +1,53 @@
+// Declarar o tipo global do PDF.js
+declare global {
+  interface Window {
+    pdfjsLib: any;
+  }
+}
+
 export interface PdfContent {
   text: string[];
   pageCount: number;
 }
 
-export async function extractTextFromPdf(file: File): Promise<PdfContent> {
-  // Importar PDF.js dinamicamente apenas no cliente
-  const pdfjsLib = await import('pdfjs-dist');
+// Aguardar o PDF.js carregar
+function waitForPdfJs(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined') {
+      reject(new Error('Window não disponível'));
+      return;
+    }
 
-  // Configurar worker
-  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
+    // Se já carregou
+    if (window.pdfjsLib) {
+      // Configurar worker
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      resolve(window.pdfjsLib);
+      return;
+    }
+
+    // Aguardar carregar (máximo 10 segundos)
+    let attempts = 0;
+    const maxAttempts = 100;
+
+    const checkInterval = setInterval(() => {
+      attempts++;
+      if (window.pdfjsLib) {
+        clearInterval(checkInterval);
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        resolve(window.pdfjsLib);
+      } else if (attempts >= maxAttempts) {
+        clearInterval(checkInterval);
+        reject(new Error('Timeout aguardando PDF.js carregar'));
+      }
+    }, 100);
+  });
+}
+
+export async function extractTextFromPdf(file: File): Promise<PdfContent> {
+  const pdfjsLib = await waitForPdfJs();
 
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -36,11 +75,7 @@ export async function extractTextFromPdf(file: File): Promise<PdfContent> {
 }
 
 export async function extractImagesFromPdf(file: File): Promise<string[]> {
-  // Para extração de imagens, vamos usar uma abordagem mais simples
-  // Renderizar a primeira página como imagem (capa)
-  const pdfjsLib = await import('pdfjs-dist');
-
-  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
+  const pdfjsLib = await waitForPdfJs();
 
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
