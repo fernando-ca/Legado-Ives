@@ -1,50 +1,85 @@
 // src/lib/youtubeExtractor.ts
-// Integração com Cobalt API para extrair áudio do YouTube
+// Extração de áudio do YouTube usando Invidious API
 
-interface CobaltResponse {
-  status: 'stream' | 'redirect' | 'picker' | 'tunnel' | 'error';
-  url?: string;
-  text?: string;
+interface InvidiousFormat {
+  url: string;
+  itag: string;
+  type: string;
+  container: string;
+  encoding: string;
+  audioQuality?: string;
+  audioSampleRate?: number;
+  audioBitrate?: number;
+}
+
+interface InvidiousVideo {
+  adaptiveFormats: InvidiousFormat[];
+  formatStreams: InvidiousFormat[];
+}
+
+// Lista de instâncias Invidious públicas (fallback)
+const INVIDIOUS_INSTANCES = [
+  'https://inv.nadeko.net',
+  'https://invidious.nerdvpn.de',
+  'https://invidious.jing.rocks',
+  'https://yt.artemislena.eu',
+];
+
+function extractVideoId(url: string): string | null {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
 }
 
 export async function extractAudioFromYouTube(youtubeUrl: string): Promise<string> {
-  // Cobalt API v7 - requer headers específicos
-  const response = await fetch('https://api.cobalt.tools/', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    },
-    body: JSON.stringify({
-      url: youtubeUrl,
-      downloadMode: 'audio',
-      audioFormat: 'mp3',
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('Cobalt API error:', response.status, errorText);
-    throw new Error(`Falha ao extrair áudio do YouTube (${response.status})`);
+  const videoId = extractVideoId(youtubeUrl);
+  if (!videoId) {
+    throw new Error('ID do vídeo não encontrado na URL');
   }
 
-  const data: CobaltResponse = await response.json();
+  let lastError: Error | null = null;
 
-  if (data.status === 'error') {
-    throw new Error(data.text || 'Erro desconhecido do Cobalt');
+  // Tenta cada instância Invidious
+  for (const instance of INVIDIOUS_INSTANCES) {
+    try {
+      const response = await fetch(`${instance}/api/v1/videos/${videoId}`, {
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        continue; // Tenta próxima instância
+      }
+
+      const data: InvidiousVideo = await response.json();
+
+      // Procura o melhor formato de áudio
+      const audioFormats = data.adaptiveFormats.filter(
+        (f) => f.type?.startsWith('audio/') && f.url
+      );
+
+      if (audioFormats.length === 0) {
+        continue; // Tenta próxima instância
+      }
+
+      // Ordena por qualidade (maior bitrate primeiro)
+      audioFormats.sort((a, b) => (b.audioBitrate || 0) - (a.audioBitrate || 0));
+
+      return audioFormats[0].url;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Erro desconhecido');
+      continue; // Tenta próxima instância
+    }
   }
 
-  if (data.status === 'stream' || data.status === 'redirect' || data.status === 'tunnel') {
-    if (!data.url) throw new Error('URL do áudio não encontrada');
-    return data.url;
-  }
-
-  // Se for 'picker', pega a primeira opção
-  if (data.status === 'picker' && data.url) {
-    return data.url;
-  }
-
-  throw new Error('Resposta inesperada do Cobalt');
+  throw lastError || new Error('Não foi possível extrair áudio de nenhuma instância');
 }
 
 export function isYouTubeUrl(url: string): boolean {
