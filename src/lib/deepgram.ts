@@ -103,7 +103,7 @@ export async function transcribeAudio(audioUrl: string): Promise<TranscriptionRe
       smart_format: true,
       punctuate: true,
       paragraphs: true,
-      mimetype: 'audio/webm', // Opus em container webm
+      // Deixa o Deepgram detectar o formato automaticamente
     }
   );
 
@@ -114,10 +114,18 @@ export async function transcribeAudio(audioUrl: string): Promise<TranscriptionRe
   const channel = result.results?.channels[0];
   const alternative = channel?.alternatives[0];
 
-  // Log da duração transcrita
-  const lastWord = alternative?.words?.[alternative.words.length - 1];
+  // Log detalhado da transcrição
+  const words = alternative?.words || [];
+  const lastWord = words[words.length - 1];
+  const firstWord = words[0];
   const transcribedDuration = lastWord ? lastWord.end : 0;
-  console.log(`Transcrição concluída: ${alternative?.words?.length || 0} palavras, duração transcrita: ${Math.round(transcribedDuration)}s`);
+  const transcriptLength = alternative?.transcript?.length || 0;
+
+  console.log(`Transcrição concluída:`);
+  console.log(`  - Palavras: ${words.length}`);
+  console.log(`  - Duração: ${firstWord?.start || 0}s a ${Math.round(transcribedDuration)}s`);
+  console.log(`  - Texto: ${transcriptLength} caracteres`);
+  console.log(`  - Últimas 5 palavras: ${words.slice(-5).map(w => `"${w.word}"@${Math.round(w.end)}s`).join(', ')}`);
 
   return {
     transcript: alternative?.transcript || '',

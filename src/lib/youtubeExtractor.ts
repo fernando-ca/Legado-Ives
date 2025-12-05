@@ -115,9 +115,9 @@ export async function extractAudioFromYouTube(youtubeUrl: string): Promise<strin
         });
 
         if (completeStreams.length > 0) {
-          // Prefere opus sobre m4a (melhor compatibilidade com Deepgram)
-          const opusStreams = completeStreams.filter(s => s.codec?.includes('opus'));
-          const targetStreams = opusStreams.length > 0 ? opusStreams : completeStreams;
+          // Prefere m4a/mp4a (mais confiável para transcrição completa)
+          const m4aStreams = completeStreams.filter(s => s.codec?.includes('mp4a') || s.mimeType?.includes('mp4'));
+          const targetStreams = m4aStreams.length > 0 ? m4aStreams : completeStreams;
 
           // Entre os streams completos, pega o de maior bitrate (melhor qualidade)
           targetStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
