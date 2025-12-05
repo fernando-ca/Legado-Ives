@@ -1,28 +1,27 @@
 // src/lib/youtubeExtractor.ts
-// Extração de áudio do YouTube usando Invidious API
+// Extração de áudio do YouTube usando Piped API
 
-interface InvidiousFormat {
+interface PipedStream {
   url: string;
-  itag: string;
-  type: string;
-  container: string;
-  encoding: string;
-  audioQuality?: string;
-  audioSampleRate?: number;
-  audioBitrate?: number;
+  format: string;
+  quality: string;
+  mimeType: string;
+  codec: string;
+  bitrate: number;
+  contentLength: number;
 }
 
-interface InvidiousVideo {
-  adaptiveFormats: InvidiousFormat[];
-  formatStreams: InvidiousFormat[];
+interface PipedVideo {
+  audioStreams: PipedStream[];
+  title: string;
 }
 
-// Lista de instâncias Invidious públicas (fallback)
-const INVIDIOUS_INSTANCES = [
-  'https://inv.nadeko.net',
-  'https://invidious.nerdvpn.de',
-  'https://invidious.jing.rocks',
-  'https://yt.artemislena.eu',
+// Instâncias Piped que permitem acesso de servidores
+const PIPED_INSTANCES = [
+  'https://pipedapi.kavin.rocks',
+  'https://pipedapi.adminforge.de',
+  'https://api.piped.yt',
+  'https://pipedapi.in.projectsegfau.lt',
 ];
 
 function extractVideoId(url: string): string | null {
@@ -43,43 +42,60 @@ export async function extractAudioFromYouTube(youtubeUrl: string): Promise<strin
     throw new Error('ID do vídeo não encontrado na URL');
   }
 
-  let lastError: Error | null = null;
+  const errors: string[] = [];
 
-  // Tenta cada instância Invidious
-  for (const instance of INVIDIOUS_INSTANCES) {
+  // Tenta cada instância Piped
+  for (const instance of PIPED_INSTANCES) {
     try {
-      const response = await fetch(`${instance}/api/v1/videos/${videoId}`, {
+      console.log(`Tentando instância: ${instance}`);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
+      const response = await fetch(`${instance}/streams/${videoId}`, {
         headers: {
           'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         },
+        signal: controller.signal,
       });
 
+      clearTimeout(timeoutId);
+
       if (!response.ok) {
-        continue; // Tenta próxima instância
+        errors.push(`${instance}: HTTP ${response.status}`);
+        continue;
       }
 
-      const data: InvidiousVideo = await response.json();
+      const data: PipedVideo = await response.json();
 
-      // Procura o melhor formato de áudio
-      const audioFormats = data.adaptiveFormats.filter(
-        (f) => f.type?.startsWith('audio/') && f.url
-      );
-
-      if (audioFormats.length === 0) {
-        continue; // Tenta próxima instância
+      if (!data.audioStreams || data.audioStreams.length === 0) {
+        errors.push(`${instance}: Sem streams de áudio`);
+        continue;
       }
 
-      // Ordena por qualidade (maior bitrate primeiro)
-      audioFormats.sort((a, b) => (b.audioBitrate || 0) - (a.audioBitrate || 0));
+      // Ordena por bitrate (maior primeiro) e pega o melhor
+      const sortedStreams = data.audioStreams
+        .filter(s => s.url)
+        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
 
-      return audioFormats[0].url;
+      if (sortedStreams.length === 0) {
+        errors.push(`${instance}: URLs de áudio vazias`);
+        continue;
+      }
+
+      console.log(`Sucesso com ${instance}, bitrate: ${sortedStreams[0].bitrate}`);
+      return sortedStreams[0].url;
+
     } catch (error) {
-      lastError = error instanceof Error ? error : new Error('Erro desconhecido');
-      continue; // Tenta próxima instância
+      const msg = error instanceof Error ? error.message : 'Erro desconhecido';
+      errors.push(`${instance}: ${msg}`);
+      continue;
     }
   }
 
-  throw lastError || new Error('Não foi possível extrair áudio de nenhuma instância');
+  console.error('Todas as instâncias falharam:', errors);
+  throw new Error(`Não foi possível extrair áudio. Erros: ${errors.join('; ')}`);
 }
 
 export function isYouTubeUrl(url: string): boolean {
