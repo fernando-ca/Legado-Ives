@@ -18,11 +18,16 @@ interface PipedVideo {
 }
 
 // Instâncias Piped que permitem acesso de servidores
-// Ordenadas por confiabilidade (kavin.rocks é a mais estável)
+// Lista expandida para maior disponibilidade
 const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
+  'https://pipedapi.r4fo.com',
+  'https://pipedapi.darkness.services',
+  'https://api.piped.privacydev.net',
+  'https://pipedapi.leptons.xyz',
+  'https://pipedapi.in.projectsegfau.lt',
   'https://pipedapi.adminforge.de',
-  'https://pipedapi.syncpundit.io',
+  'https://watchapi.whatever.social',
   'https://api.piped.yt',
 ];
 
