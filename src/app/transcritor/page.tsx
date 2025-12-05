@@ -326,10 +326,9 @@ export default function Transcritor() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Preview da transcrição:
                 </label>
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 max-h-64 overflow-y-auto">
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 max-h-96 overflow-y-auto">
                   <p className="text-gray-700 whitespace-pre-wrap">
-                    {result.transcript.substring(0, 1000)}
-                    {result.transcript.length > 1000 && '...'}
+                    {result.transcript}
                   </p>
                 </div>
               </div>
