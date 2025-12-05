@@ -3,8 +3,8 @@ import Script from 'next/script'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Conversor PDF para EPUB - Legado Ives',
-  description: 'Converta seus PDFs para EPUB de forma simples e rápida',
+  title: 'Legado Ives - Ferramentas de Conversão',
+  description: 'Converta PDFs para EPUB e transcreva vídeos para texto',
   icons: {
     icon: '/favicon.svg',
   },

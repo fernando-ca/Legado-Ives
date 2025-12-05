@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import Link from 'next/link';
 import { extractTextFromPdf, extractImagesFromPdf } from '@/lib/pdfExtractor';
 import { extractMetadata } from '@/lib/metadataParser';
 import { generateEpub } from '@/lib/epubGenerator';
@@ -106,6 +107,19 @@ export default function Home() {
           <p className="text-white/80 text-lg">
             Converta seus livros em PDF para formato EPUB
           </p>
+        </div>
+
+        {/* Navegação */}
+        <div className="flex justify-center gap-4 mb-6">
+          <span className="px-4 py-2 rounded-lg bg-[#C9A962] text-white font-medium">
+            PDF → EPUB
+          </span>
+          <Link
+            href="/transcritor"
+            className="px-4 py-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-all"
+          >
+            Vídeo → Texto
+          </Link>
         </div>
 
         {/* Card Principal */}
