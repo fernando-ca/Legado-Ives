@@ -14,6 +14,7 @@ interface PipedStream {
 interface PipedVideo {
   audioStreams: PipedStream[];
   title: string;
+  duration: number; // duração em segundos
 }
 
 // Instâncias Piped que permitem acesso de servidores
@@ -82,27 +83,56 @@ export async function extractAudioFromYouTube(youtubeUrl: string): Promise<strin
         continue;
       }
 
-      // Log todos os streams disponíveis para debug
+      // Log duração e streams disponíveis para debug
+      const durationSec = data.duration || 0;
+      const durationStr = `${Math.floor(durationSec / 60)}:${(durationSec % 60).toString().padStart(2, '0')}`;
+      console.log(`Vídeo: "${data.title}", duração: ${durationStr} (${durationSec}s)`);
+
       console.log(`Streams disponíveis (${validStreams.length}):`);
       validStreams.forEach((s, i) => {
-        console.log(`  ${i + 1}. bitrate: ${s.bitrate}, size: ${s.contentLength || '?'}, codec: ${s.codec}`);
+        // Calcula duração estimada baseada no contentLength e bitrate
+        const estimatedDuration = s.contentLength && s.bitrate ? Math.round(s.contentLength * 8 / s.bitrate) : null;
+        const durationInfo = estimatedDuration ? ` (~${estimatedDuration}s)` : '';
+        console.log(`  ${i + 1}. bitrate: ${s.bitrate}, size: ${s.contentLength || '?'}${durationInfo}, codec: ${s.codec}`);
       });
 
-      // Prioriza streams com contentLength conhecido e bitrate adequado
-      // Primeiro, filtra os que têm contentLength
-      const streamsWithSize = validStreams.filter(s => s.contentLength && s.contentLength > 0);
-      const targetStreams = streamsWithSize.length > 0 ? streamsWithSize : validStreams;
+      // Prioriza streams com duração próxima à duração real do vídeo
+      const streamsWithSize = validStreams.filter(s => s.contentLength && s.contentLength > 0 && s.bitrate);
 
-      // Ordena por bitrate mais próximo de 128kbps (bom equilíbrio qualidade/tamanho)
-      const targetBitrate = 128000;
-      const sortedStreams = targetStreams.sort((a, b) => {
-        const diffA = Math.abs((a.bitrate || 0) - targetBitrate);
-        const diffB = Math.abs((b.bitrate || 0) - targetBitrate);
-        return diffA - diffB;
-      });
+      let selectedStream: PipedStream;
 
-      const selectedStream = sortedStreams[0];
-      console.log(`Selecionado: bitrate=${selectedStream.bitrate}, size=${selectedStream.contentLength || 'desconhecido'}, codec=${selectedStream.codec}`);
+      if (streamsWithSize.length > 0 && durationSec > 0) {
+        // Calcula duração estimada de cada stream e filtra os que têm pelo menos 90% da duração do vídeo
+        const completeStreams = streamsWithSize.filter(s => {
+          const estimatedDuration = s.contentLength * 8 / s.bitrate;
+          return estimatedDuration >= durationSec * 0.9;
+        });
+
+        if (completeStreams.length > 0) {
+          // Entre os streams completos, pega o de maior bitrate (melhor qualidade)
+          completeStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+          selectedStream = completeStreams[0];
+          const estimatedDur = Math.round(selectedStream.contentLength * 8 / selectedStream.bitrate);
+          console.log(`Selecionado stream completo: bitrate=${selectedStream.bitrate}, size=${selectedStream.contentLength}, ~${estimatedDur}s, codec=${selectedStream.codec}`);
+        } else {
+          // Nenhum stream completo - pega o maior
+          streamsWithSize.sort((a, b) => (b.contentLength || 0) - (a.contentLength || 0));
+          selectedStream = streamsWithSize[0];
+          const estimatedDur = Math.round(selectedStream.contentLength * 8 / selectedStream.bitrate);
+          console.warn(`AVISO: Nenhum stream com duração completa! Melhor disponível: ~${estimatedDur}s de ${durationSec}s`);
+          console.log(`Selecionado maior stream: bitrate=${selectedStream.bitrate}, size=${selectedStream.contentLength}, codec=${selectedStream.codec}`);
+        }
+      } else if (streamsWithSize.length > 0) {
+        // Sem duração do vídeo - pega o maior stream
+        streamsWithSize.sort((a, b) => (b.contentLength || 0) - (a.contentLength || 0));
+        selectedStream = streamsWithSize[0];
+        console.log(`Selecionado maior stream: bitrate=${selectedStream.bitrate}, size=${selectedStream.contentLength}, codec=${selectedStream.codec}`);
+      } else {
+        // Fallback: pega o de maior bitrate
+        validStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+        selectedStream = validStreams[0];
+        console.log(`Selecionado por bitrate: bitrate=${selectedStream.bitrate}, size=${selectedStream.contentLength || 'desconhecido'}, codec=${selectedStream.codec}`);
+      }
       return selectedStream.url;
 
     } catch (error) {
