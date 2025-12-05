@@ -74,25 +74,35 @@ export async function extractAudioFromYouTube(youtubeUrl: string): Promise<strin
         continue;
       }
 
-      // Filtra streams válidos
-      const validStreams = data.audioStreams.filter(s => s.url);
+      // Filtra streams válidos - prioriza os que têm contentLength definido
+      const validStreams = data.audioStreams.filter(s => s.url && s.url.length > 0);
 
       if (validStreams.length === 0) {
         errors.push(`${instance}: URLs de áudio vazias`);
         continue;
       }
 
-      // Prefere qualidade média (~128kbps) para downloads mais rápidos e completos
-      // Ordena por proximidade a 128000 bitrate
+      // Log todos os streams disponíveis para debug
+      console.log(`Streams disponíveis (${validStreams.length}):`);
+      validStreams.forEach((s, i) => {
+        console.log(`  ${i + 1}. bitrate: ${s.bitrate}, size: ${s.contentLength || '?'}, codec: ${s.codec}`);
+      });
+
+      // Prioriza streams com contentLength conhecido e bitrate adequado
+      // Primeiro, filtra os que têm contentLength
+      const streamsWithSize = validStreams.filter(s => s.contentLength && s.contentLength > 0);
+      const targetStreams = streamsWithSize.length > 0 ? streamsWithSize : validStreams;
+
+      // Ordena por bitrate mais próximo de 128kbps (bom equilíbrio qualidade/tamanho)
       const targetBitrate = 128000;
-      const sortedStreams = validStreams.sort((a, b) => {
+      const sortedStreams = targetStreams.sort((a, b) => {
         const diffA = Math.abs((a.bitrate || 0) - targetBitrate);
         const diffB = Math.abs((b.bitrate || 0) - targetBitrate);
         return diffA - diffB;
       });
 
       const selectedStream = sortedStreams[0];
-      console.log(`Sucesso com ${instance}, bitrate: ${selectedStream.bitrate}, tamanho: ${selectedStream.contentLength || 'desconhecido'}`);
+      console.log(`Selecionado: bitrate=${selectedStream.bitrate}, size=${selectedStream.contentLength || 'desconhecido'}, codec=${selectedStream.codec}`);
       return selectedStream.url;
 
     } catch (error) {
