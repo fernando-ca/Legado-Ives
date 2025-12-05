@@ -103,6 +103,7 @@ export async function transcribeAudio(audioUrl: string): Promise<TranscriptionRe
       smart_format: true,
       punctuate: true,
       paragraphs: true,
+      mimetype: 'audio/mp4', // Especifica o formato para melhor processamento
     }
   );
 
@@ -113,7 +114,10 @@ export async function transcribeAudio(audioUrl: string): Promise<TranscriptionRe
   const channel = result.results?.channels[0];
   const alternative = channel?.alternatives[0];
 
-  console.log('Transcrição concluída, palavras:', alternative?.words?.length || 0);
+  // Log da duração transcrita
+  const lastWord = alternative?.words?.[alternative.words.length - 1];
+  const transcribedDuration = lastWord ? lastWord.end : 0;
+  console.log(`Transcrição concluída: ${alternative?.words?.length || 0} palavras, duração transcrita: ${Math.round(transcribedDuration)}s`);
 
   return {
     transcript: alternative?.transcript || '',

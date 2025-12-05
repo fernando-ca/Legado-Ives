@@ -18,11 +18,12 @@ interface PipedVideo {
 }
 
 // Instâncias Piped que permitem acesso de servidores
+// Ordenadas por confiabilidade (kavin.rocks é a mais estável)
 const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
   'https://pipedapi.adminforge.de',
+  'https://pipedapi.syncpundit.io',
   'https://api.piped.yt',
-  'https://pipedapi.in.projectsegfau.lt',
 ];
 
 function extractVideoId(url: string): string | null {
@@ -109,18 +110,20 @@ export async function extractAudioFromYouTube(youtubeUrl: string): Promise<strin
         });
 
         if (completeStreams.length > 0) {
+          // Prefere m4a/mp4a sobre opus (mais confiável)
+          const m4aStreams = completeStreams.filter(s => s.codec?.includes('mp4a') || s.mimeType?.includes('mp4'));
+          const targetStreams = m4aStreams.length > 0 ? m4aStreams : completeStreams;
+
           // Entre os streams completos, pega o de maior bitrate (melhor qualidade)
-          completeStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-          selectedStream = completeStreams[0];
+          targetStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+          selectedStream = targetStreams[0];
           const estimatedDur = Math.round(selectedStream.contentLength * 8 / selectedStream.bitrate);
           console.log(`Selecionado stream completo: bitrate=${selectedStream.bitrate}, size=${selectedStream.contentLength}, ~${estimatedDur}s, codec=${selectedStream.codec}`);
         } else {
-          // Nenhum stream completo - pega o maior
-          streamsWithSize.sort((a, b) => (b.contentLength || 0) - (a.contentLength || 0));
-          selectedStream = streamsWithSize[0];
-          const estimatedDur = Math.round(selectedStream.contentLength * 8 / selectedStream.bitrate);
-          console.warn(`AVISO: Nenhum stream com duração completa! Melhor disponível: ~${estimatedDur}s de ${durationSec}s`);
-          console.log(`Selecionado maior stream: bitrate=${selectedStream.bitrate}, size=${selectedStream.contentLength}, codec=${selectedStream.codec}`);
+          // Nenhum stream completo - tenta próxima instância
+          console.warn(`AVISO: Nenhum stream com duração completa nesta instância!`);
+          errors.push(`${instance}: Streams incompletos`);
+          continue;
         }
       } else if (streamsWithSize.length > 0) {
         // Sem duração do vídeo - pega o maior stream
