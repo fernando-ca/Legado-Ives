@@ -103,7 +103,7 @@ export async function transcribeAudio(audioUrl: string): Promise<TranscriptionRe
       smart_format: true,
       punctuate: true,
       paragraphs: true,
-      mimetype: 'audio/mp4', // Especifica o formato para melhor processamento
+      mimetype: 'audio/webm', // Opus em container webm
     }
   );
 
