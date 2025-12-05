@@ -74,18 +74,26 @@ export async function extractAudioFromYouTube(youtubeUrl: string): Promise<strin
         continue;
       }
 
-      // Ordena por bitrate (maior primeiro) e pega o melhor
-      const sortedStreams = data.audioStreams
-        .filter(s => s.url)
-        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+      // Filtra streams válidos
+      const validStreams = data.audioStreams.filter(s => s.url);
 
-      if (sortedStreams.length === 0) {
+      if (validStreams.length === 0) {
         errors.push(`${instance}: URLs de áudio vazias`);
         continue;
       }
 
-      console.log(`Sucesso com ${instance}, bitrate: ${sortedStreams[0].bitrate}`);
-      return sortedStreams[0].url;
+      // Prefere qualidade média (~128kbps) para downloads mais rápidos e completos
+      // Ordena por proximidade a 128000 bitrate
+      const targetBitrate = 128000;
+      const sortedStreams = validStreams.sort((a, b) => {
+        const diffA = Math.abs((a.bitrate || 0) - targetBitrate);
+        const diffB = Math.abs((b.bitrate || 0) - targetBitrate);
+        return diffA - diffB;
+      });
+
+      const selectedStream = sortedStreams[0];
+      console.log(`Sucesso com ${instance}, bitrate: ${selectedStream.bitrate}, tamanho: ${selectedStream.contentLength || 'desconhecido'}`);
+      return selectedStream.url;
 
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Erro desconhecido';

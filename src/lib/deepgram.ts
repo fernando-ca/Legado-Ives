@@ -16,20 +16,51 @@ export interface TranscriptionResult {
 async function downloadAudio(url: string): Promise<Buffer> {
   console.log('Baixando áudio de:', url.substring(0, 100) + '...');
 
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    },
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 55000); // 55s timeout (deixa margem para Deepgram)
 
-  if (!response.ok) {
-    throw new Error(`Falha ao baixar áudio: HTTP ${response.status}`);
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': '*/*',
+        'Accept-Encoding': 'identity', // Evita compressão que pode truncar
+      },
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Falha ao baixar áudio: HTTP ${response.status}`);
+    }
+
+    // Lê o conteúdo em chunks para garantir download completo
+    const chunks: Uint8Array[] = [];
+    const reader = response.body?.getReader();
+
+    if (!reader) {
+      throw new Error('Não foi possível ler o stream de áudio');
+    }
+
+    let totalBytes = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      totalBytes += value.length;
+    }
+
+    console.log('Áudio baixado, tamanho total:', totalBytes, 'bytes');
+
+    // Combina todos os chunks em um único buffer
+    const fullBuffer = Buffer.concat(chunks.map(chunk => Buffer.from(chunk)));
+    return fullBuffer;
+
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
   }
-
-  const arrayBuffer = await response.arrayBuffer();
-  console.log('Áudio baixado, tamanho:', arrayBuffer.byteLength, 'bytes');
-
-  return Buffer.from(arrayBuffer);
 }
 
 export async function transcribeAudio(audioUrl: string): Promise<TranscriptionResult> {
