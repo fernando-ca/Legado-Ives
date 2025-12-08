@@ -3,164 +3,203 @@
 import { useState, useCallback } from 'react';
 import Link from 'next/link';
 import { upload } from '@vercel/blob/client';
+import JSZip from 'jszip';
 
-type TranscriptionStatus = 'idle' | 'extracting' | 'transcribing' | 'done' | 'error';
-
-interface TranscriptionResult {
-  transcript: string;
-  srt: string;
+// Types
+interface BatchFile {
+  id: string;
+  file: File;
+  fileName: string;
+  status: 'pending' | 'uploading' | 'transcribing' | 'done' | 'error';
+  uploadProgress: number;
+  result?: {
+    transcript: string;
+    srt: string;
+  };
+  error?: string;
 }
 
-export default function Transcritor() {
-  const [youtubeUrl, setYoutubeUrl] = useState('');
-  const [file, setFile] = useState<File | null>(null);
-  const [status, setStatus] = useState<TranscriptionStatus>('idle');
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<TranscriptionResult | null>(null);
-  const [dragActive, setDragActive] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [sourceFileName, setSourceFileName] = useState<string>('');
+type BatchStatus = 'idle' | 'processing' | 'done';
 
+// Validação de tipos de arquivo
+const VALID_TYPES = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm', 'audio/mpeg', 'audio/wav', 'audio/mp4', 'audio/x-m4a'];
+const VALID_EXTENSIONS = /\.(mp4|mov|avi|webm|mp3|wav|m4a)$/i;
+
+// Função para limpar nome do arquivo
+const cleanFileName = (name: string): string => {
+  return name
+    .replace(/\.[^/.]+$/, '')           // Remove extensão
+    .replace(/\s*\([^)]*\)\s*$/, '')    // Remove qualidade entre parênteses
+    .trim();
+};
+
+// Função para validar arquivo
+const isValidFile = (file: File): boolean => {
+  return VALID_TYPES.some(type => file.type.includes(type.split('/')[1])) ||
+         VALID_EXTENSIONS.test(file.name);
+};
+
+export default function Transcritor() {
+  const [files, setFiles] = useState<BatchFile[]>([]);
+  const [batchStatus, setBatchStatus] = useState<BatchStatus>('idle');
+  const [dragActive, setDragActive] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Atualiza status de um arquivo específico
+  const updateFileStatus = useCallback((id: string, updates: Partial<BatchFile>) => {
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
+  }, []);
+
+  // Adiciona arquivos à lista
+  const addFiles = useCallback((newFiles: File[]) => {
+    const validFiles = newFiles.filter(isValidFile);
+
+    if (validFiles.length !== newFiles.length) {
+      setError('Alguns arquivos foram ignorados. Formatos aceitos: MP4, MOV, AVI, WEBM, MP3, WAV, M4A');
+    }
+
+    const batchFiles: BatchFile[] = validFiles.map(file => ({
+      id: crypto.randomUUID(),
+      file,
+      fileName: cleanFileName(file.name),
+      status: 'pending',
+      uploadProgress: 0,
+    }));
+
+    setFiles(prev => [...prev, ...batchFiles]);
+    setError(null);
+  }, []);
+
+  // Handle drag and drop
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragActive(false);
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    addFiles(droppedFiles);
+  }, [addFiles]);
 
-    const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile) {
-      const validTypes = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm', 'audio/mpeg', 'audio/wav', 'audio/mp4', 'audio/x-m4a'];
-      if (validTypes.some(type => droppedFile.type.includes(type.split('/')[1])) || droppedFile.name.match(/\.(mp4|mov|avi|webm|mp3|wav|m4a)$/i)) {
-        setFile(droppedFile);
-        setYoutubeUrl('');
-        setError(null);
-      } else {
-        setError('Formato não suportado. Use MP4, MOV, AVI, WEBM, MP3, WAV ou M4A.');
-      }
-    }
+  // Handle file input
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = Array.from(e.target.files || []);
+    addFiles(selectedFiles);
+    e.target.value = ''; // Reset input para permitir selecionar os mesmos arquivos novamente
+  };
+
+  // Remove arquivo da lista
+  const removeFile = useCallback((id: string) => {
+    setFiles(prev => prev.filter(f => f.id !== id));
   }, []);
 
-  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-      setFile(selectedFile);
-      setYoutubeUrl('');
-      setError(null);
-    }
-  };
+  // Processa um único arquivo
+  const processFile = useCallback(async (batchFile: BatchFile) => {
+    const { id, file } = batchFile;
 
-  const handleYoutubeUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setYoutubeUrl(e.target.value);
-    if (e.target.value) {
-      setFile(null);
+    try {
+      // 1. Upload
+      updateFileStatus(id, { status: 'uploading', uploadProgress: 0 });
+
+      const blob = await upload(file.name, file, {
+        access: 'public',
+        handleUploadUrl: '/api/upload',
+        onUploadProgress: (progress) => {
+          const percent = Math.round((progress.loaded / progress.total) * 100);
+          updateFileStatus(id, { uploadProgress: percent });
+        },
+      });
+
+      // 2. Transcrição
+      updateFileStatus(id, { status: 'transcribing' });
+
+      const response = await fetch('/api/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audioUrl: blob.url }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Falha na transcrição');
+      }
+
+      const data = await response.json();
+
+      // 3. Salvar resultado
+      updateFileStatus(id, {
+        status: 'done',
+        result: { transcript: data.transcript, srt: data.srt }
+      });
+
+      // 4. Limpar arquivo do Blob
+      await fetch('/api/upload', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: blob.url }),
+      }).catch(() => {});
+
+    } catch (err) {
+      updateFileStatus(id, {
+        status: 'error',
+        error: err instanceof Error ? err.message : 'Erro desconhecido'
+      });
     }
+  }, [updateFileStatus]);
+
+  // Processa todos os arquivos com concorrência controlada
+  const processAllFiles = useCallback(async () => {
+    setBatchStatus('processing');
     setError(null);
-  };
 
-  const downloadFile = (content: string, filename: string, mimeType: string) => {
-    const blob = new Blob([content], { type: mimeType });
+    const pendingFiles = files.filter(f => f.status === 'pending');
+    const CONCURRENCY = 2;
+
+    // Processa em lotes de 2
+    for (let i = 0; i < pendingFiles.length; i += CONCURRENCY) {
+      const batch = pendingFiles.slice(i, i + CONCURRENCY);
+      await Promise.all(batch.map(processFile));
+    }
+
+    setBatchStatus('done');
+  }, [files, processFile]);
+
+  // Gera e baixa ZIP com todos os resultados
+  const downloadAllAsZip = useCallback(async () => {
+    const zip = new JSZip();
+    const completedFiles = files.filter(f => f.status === 'done' && f.result);
+
+    completedFiles.forEach(({ fileName, result }) => {
+      zip.file(`${fileName}.txt`, result!.transcript);
+      zip.file(`${fileName}.srt`, result!.srt);
+    });
+
+    const blob = await zip.generateAsync({ type: 'blob' });
+
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = filename;
+    a.download = `transcricoes_${new Date().toISOString().split('T')[0]}.zip`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  };
+  }, [files]);
 
-  const handleTranscribe = async () => {
-    setError(null);
-    setResult(null);
-
-    try {
-      let audioUrl: string;
-
-      if (youtubeUrl) {
-        // Extrair áudio do YouTube
-        setStatus('extracting');
-        const ytResponse = await fetch('/api/youtube-audio', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: youtubeUrl }),
-        });
-
-        if (!ytResponse.ok) {
-          const data = await ytResponse.json();
-          throw new Error(data.error || 'Falha ao extrair áudio do YouTube');
-        }
-
-        const ytData = await ytResponse.json();
-        audioUrl = ytData.audioUrl;
-      } else if (file) {
-        // Upload do arquivo (client-side para suportar arquivos grandes)
-        setStatus('extracting');
-        setUploadProgress(0);
-
-        // Guardar nome do arquivo sem extensão e sem qualidade (ex: "720p") para usar no download
-        const fileNameWithoutExt = file.name
-          .replace(/\.[^/.]+$/, '')           // Remove extensão (.mp4, .mov, etc)
-          .replace(/\s*\([^)]*\)\s*$/, '')    // Remove qualidade entre parênteses no final (720p), (1080p), etc
-          .trim();
-        setSourceFileName(fileNameWithoutExt);
-
-        const blob = await upload(file.name, file, {
-          access: 'public',
-          handleUploadUrl: '/api/upload',
-          onUploadProgress: (progress) => {
-            const percent = Math.round((progress.loaded / progress.total) * 100);
-            setUploadProgress(percent);
-          },
-        });
-
-        audioUrl = blob.url;
-      } else {
-        throw new Error('Selecione um arquivo ou cole uma URL do YouTube');
-      }
-
-      // Transcrever
-      setStatus('transcribing');
-      const transcribeResponse = await fetch('/api/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ audioUrl }),
-      });
-
-      if (!transcribeResponse.ok) {
-        const data = await transcribeResponse.json();
-        throw new Error(data.error || 'Falha na transcrição');
-      }
-
-      const transcribeData = await transcribeResponse.json();
-      setResult({
-        transcript: transcribeData.transcript,
-        srt: transcribeData.srt,
-      });
-      setStatus('done');
-
-      // Deletar arquivo do Vercel Blob se foi upload
-      if (file) {
-        await fetch('/api/upload', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: audioUrl }),
-        }).catch(() => {}); // Ignora erro ao deletar
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro desconhecido');
-      setStatus('error');
-    }
-  };
-
+  // Reset tudo
   const handleReset = () => {
-    setYoutubeUrl('');
-    setFile(null);
-    setStatus('idle');
+    setFiles([]);
+    setBatchStatus('idle');
     setError(null);
-    setResult(null);
-    setUploadProgress(0);
-    setSourceFileName('');
   };
 
-  const isProcessing = status === 'extracting' || status === 'transcribing';
+  // Contadores
+  const pendingCount = files.filter(f => f.status === 'pending').length;
+  const processingCount = files.filter(f => f.status === 'uploading' || f.status === 'transcribing').length;
+  const doneCount = files.filter(f => f.status === 'done').length;
+  const errorCount = files.filter(f => f.status === 'error').length;
+
+  const isProcessing = batchStatus === 'processing';
+  const hasFiles = files.length > 0;
+  const hasPendingFiles = pendingCount > 0;
+  const hasResults = doneCount > 0;
 
   return (
     <main className="min-h-screen p-4 md:p-8 flex items-center justify-center">
@@ -171,7 +210,7 @@ export default function Transcritor() {
             Transcritor <span className="text-[#C9A962]">Vídeo</span> → <span className="text-[#C9A962]">Texto</span>
           </h1>
           <p className="text-white/80 text-lg">
-            Transcreva vídeos do YouTube ou arquivos locais para texto
+            Transcreva múltiplos vídeos simultaneamente
           </p>
         </div>
 
@@ -190,181 +229,204 @@ export default function Transcritor() {
 
         {/* Card Principal */}
         <div className="bg-white rounded-2xl shadow-2xl p-6 md:p-8 border border-[#C9A962]/20">
-          {status === 'idle' || status === 'error' ? (
-            <div className="space-y-6">
-              {/* Upload de Arquivo */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Upload de Arquivo
-                </label>
-                <div
-                  onDrop={handleDrop}
-                  onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
-                  onDragLeave={() => setDragActive(false)}
-                  onClick={() => document.getElementById('fileInput')?.click()}
-                  className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer
-                    ${dragActive
-                      ? 'border-[#C9A962] bg-[#FDF8E8]'
-                      : 'border-gray-300 hover:border-[#C9A962] hover:bg-[#FDF8E8]/50'
-                    }
-                    ${file ? 'bg-[#FDF8E8] border-[#C9A962]' : ''}`}
-                >
-                  <input
-                    id="fileInput"
-                    type="file"
-                    accept=".mp4,.mov,.avi,.webm,.mp3,.wav,.m4a,video/*,audio/*"
-                    className="hidden"
-                    onChange={handleFileInput}
-                  />
 
-                  {file ? (
-                    <div className="flex items-center justify-center gap-2">
-                      <span className="text-2xl">📁</span>
-                      <span className="text-gray-700 font-medium">{file.name}</span>
+          {/* Área de Upload */}
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Upload de Arquivos
+            </label>
+            <div
+              onDrop={handleDrop}
+              onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+              onDragLeave={() => setDragActive(false)}
+              onClick={() => document.getElementById('fileInput')?.click()}
+              className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer
+                ${dragActive
+                  ? 'border-[#C9A962] bg-[#FDF8E8]'
+                  : 'border-gray-300 hover:border-[#C9A962] hover:bg-[#FDF8E8]/50'
+                }`}
+            >
+              <input
+                id="fileInput"
+                type="file"
+                multiple
+                accept=".mp4,.mov,.avi,.webm,.mp3,.wav,.m4a,video/*,audio/*"
+                className="hidden"
+                onChange={handleFileInput}
+                disabled={isProcessing}
+              />
+              <div className="text-4xl mb-2">📹</div>
+              <p className="text-gray-700 font-medium">
+                Arraste seus vídeos ou áudios aqui
+              </p>
+              <p className="text-gray-500 text-sm">
+                MP4, MOV, AVI, WEBM, MP3, WAV, M4A (até 500MB cada)
+              </p>
+              <p className="text-[#C9A962] text-sm mt-2 font-medium">
+                Selecione múltiplos arquivos de uma vez
+              </p>
+            </div>
+          </div>
+
+          {/* Lista de Arquivos */}
+          {hasFiles && (
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-medium text-gray-700">
+                  Arquivos ({files.length})
+                </h3>
+                {!isProcessing && (
+                  <button
+                    onClick={handleReset}
+                    className="text-sm text-red-500 hover:text-red-700"
+                  >
+                    Limpar tudo
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {files.map(file => (
+                  <div
+                    key={file.id}
+                    className={`flex items-center gap-3 p-3 rounded-lg ${
+                      file.status === 'error' ? 'bg-red-50' : 'bg-gray-50'
+                    }`}
+                  >
+                    {/* Ícone de status */}
+                    <div className="w-6 flex-shrink-0">
+                      {file.status === 'pending' && <span className="text-gray-400">○</span>}
+                      {file.status === 'uploading' && (
+                        <div className="w-4 h-4 border-2 border-[#C9A962] border-t-transparent rounded-full animate-spin" />
+                      )}
+                      {file.status === 'transcribing' && (
+                        <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                      )}
+                      {file.status === 'done' && <span className="text-green-500">✓</span>}
+                      {file.status === 'error' && <span className="text-red-500">✕</span>}
+                    </div>
+
+                    {/* Nome do arquivo */}
+                    <span className="flex-1 truncate text-sm text-gray-700" title={file.fileName}>
+                      {file.fileName}
+                    </span>
+
+                    {/* Status/Progresso */}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {file.status === 'pending' && (
+                        <span className="text-xs text-gray-400">Aguardando</span>
+                      )}
+
+                      {file.status === 'uploading' && (
+                        <div className="flex items-center gap-2">
+                          <div className="w-16 bg-gray-200 rounded-full h-1.5">
+                            <div
+                              className="bg-[#C9A962] h-1.5 rounded-full transition-all duration-300"
+                              style={{ width: `${file.uploadProgress}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-gray-500 w-8">{file.uploadProgress}%</span>
+                        </div>
+                      )}
+
+                      {file.status === 'transcribing' && (
+                        <span className="text-xs text-blue-500">Transcrevendo...</span>
+                      )}
+
+                      {file.status === 'done' && (
+                        <span className="text-xs text-green-500">Concluído</span>
+                      )}
+
+                      {file.status === 'error' && (
+                        <span className="text-xs text-red-500" title={file.error}>Erro</span>
+                      )}
+                    </div>
+
+                    {/* Botão remover */}
+                    {!isProcessing && file.status !== 'uploading' && file.status !== 'transcribing' && (
                       <button
-                        onClick={(e) => { e.stopPropagation(); setFile(null); }}
-                        className="ml-2 text-red-500 hover:text-red-700"
+                        onClick={() => removeFile(file.id)}
+                        className="text-gray-400 hover:text-red-500 flex-shrink-0"
                       >
                         ✕
                       </button>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="text-4xl mb-2">📹</div>
-                      <p className="text-gray-700 font-medium">
-                        Arraste seu vídeo ou áudio aqui
-                      </p>
-                      <p className="text-gray-500 text-sm">
-                        MP4, MOV, AVI, WEBM, MP3, WAV, M4A
-                      </p>
-                    </>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Resumo */}
+              {(isProcessing || batchStatus === 'done') && (
+                <div className="mt-3 flex gap-4 text-xs">
+                  {processingCount > 0 && (
+                    <span className="text-blue-500">Processando: {processingCount}</span>
+                  )}
+                  {doneCount > 0 && (
+                    <span className="text-green-500">Concluídos: {doneCount}</span>
+                  )}
+                  {errorCount > 0 && (
+                    <span className="text-red-500">Erros: {errorCount}</span>
+                  )}
+                  {pendingCount > 0 && isProcessing && (
+                    <span className="text-gray-400">Na fila: {pendingCount}</span>
                   )}
                 </div>
-              </div>
+              )}
+            </div>
+          )}
 
-              {/* Divisor */}
-              <div className="flex items-center gap-4">
-                <div className="flex-1 h-px bg-gray-200"></div>
-                <span className="text-gray-400 text-sm">ou</span>
-                <div className="flex-1 h-px bg-gray-200"></div>
-              </div>
+          {/* Erro geral */}
+          {error && (
+            <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-sm">
+              {error}
+            </div>
+          )}
 
-              {/* URL do YouTube */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  URL do YouTube
-                </label>
-                <input
-                  type="url"
-                  value={youtubeUrl}
-                  onChange={handleYoutubeUrlChange}
-                  placeholder="https://www.youtube.com/watch?v=..."
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#C9A962] focus:border-transparent"
-                />
-                <p className="text-gray-500 text-xs mt-1">
-                  Suporta: YouTube, YouTube Shorts
-                </p>
-              </div>
-
-              {/* Botão Transcrever */}
+          {/* Botões de Ação */}
+          <div className="space-y-3">
+            {/* Botão Iniciar */}
+            {hasPendingFiles && !isProcessing && (
               <button
-                onClick={handleTranscribe}
-                disabled={!youtubeUrl && !file}
-                className="w-full bg-[#C9A962] hover:bg-[#B89A52] text-white py-4 px-6 rounded-lg font-semibold text-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg"
+                onClick={processAllFiles}
+                className="w-full bg-[#C9A962] hover:bg-[#B89A52] text-white py-4 px-6 rounded-lg font-semibold text-lg transition-all flex items-center justify-center gap-2 shadow-lg"
               >
-                🎯 Iniciar Transcrição
+                🎯 Iniciar Transcrição ({pendingCount} {pendingCount === 1 ? 'arquivo' : 'arquivos'})
               </button>
-            </div>
-          ) : status === 'extracting' || status === 'transcribing' ? (
-            /* Progresso */
-            <div className="py-8">
-              <div className="flex flex-col items-center">
-                <div className="w-16 h-16 border-4 border-[#C9A962] border-t-transparent rounded-full animate-spin mb-6" />
+            )}
 
-                <div className="space-y-3 w-full max-w-md">
-                  <div className="flex items-center gap-3">
-                    {status === 'extracting' ? (
-                      <div className="w-5 h-5 border-2 border-[#C9A962] border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <span className="text-green-500 text-xl">✓</span>
-                    )}
-                    <span className={status === 'extracting' ? 'text-gray-700' : 'text-gray-400'}>
-                      {youtubeUrl ? 'Extraindo áudio do YouTube...' : `Enviando arquivo... ${uploadProgress > 0 ? `${uploadProgress}%` : ''}`}
-                    </span>
-                  </div>
-                  {/* Barra de progresso para upload de arquivo */}
-                  {status === 'extracting' && !youtubeUrl && uploadProgress > 0 && (
-                    <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
-                      <div
-                        className="bg-[#C9A962] h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${uploadProgress}%` }}
-                      />
-                    </div>
-                  )}
-
-                  <div className="flex items-center gap-3">
-                    {status === 'transcribing' ? (
-                      <div className="w-5 h-5 border-2 border-[#C9A962] border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <span className="text-gray-300">○</span>
-                    )}
-                    <span className={status === 'transcribing' ? 'text-gray-700' : 'text-gray-400'}>
-                      Transcrevendo com IA...
-                    </span>
-                  </div>
-                </div>
+            {/* Indicador de Processamento */}
+            {isProcessing && (
+              <div className="flex items-center justify-center gap-3 py-4">
+                <div className="w-6 h-6 border-3 border-[#C9A962] border-t-transparent rounded-full animate-spin" />
+                <span className="text-gray-600">Processando transcrições...</span>
               </div>
-            </div>
-          ) : status === 'done' && result ? (
-            /* Resultado */
-            <div className="space-y-6">
-              <div className="flex items-center gap-2 text-green-600 font-medium">
-                <span className="text-2xl">✓</span>
-                <span>Transcrição concluída!</span>
-              </div>
+            )}
 
-              {/* Botões de Download */}
-              <div className="flex flex-col sm:flex-row gap-3">
-                <button
-                  onClick={() => downloadFile(result.transcript, `${sourceFileName || 'transcricao'}.txt`, 'text/plain')}
-                  className="flex-1 bg-[#C9A962] hover:bg-[#B89A52] text-white py-3 px-6 rounded-lg font-semibold transition-all flex items-center justify-center gap-2"
-                >
-                  📥 Baixar TXT
-                </button>
-                <button
-                  onClick={() => downloadFile(result.srt, `${sourceFileName || 'legendas'}.srt`, 'text/plain')}
-                  className="flex-1 bg-[#5C1515] hover:bg-[#8B2323] text-white py-3 px-6 rounded-lg font-semibold transition-all flex items-center justify-center gap-2"
-                >
-                  📥 Baixar SRT
-                </button>
-              </div>
+            {/* Botão Download ZIP */}
+            {batchStatus === 'done' && hasResults && (
+              <button
+                onClick={downloadAllAsZip}
+                className="w-full bg-green-600 hover:bg-green-700 text-white py-4 px-6 rounded-lg font-semibold text-lg transition-all flex items-center justify-center gap-2 shadow-lg"
+              >
+                📦 Baixar Todas as Transcrições (ZIP)
+              </button>
+            )}
 
-              {/* Preview */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Preview da transcrição:
-                </label>
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 max-h-96 overflow-y-auto">
-                  <p className="text-gray-700 whitespace-pre-wrap">
-                    {result.transcript}
-                  </p>
-                </div>
-              </div>
-
-              {/* Botão Nova Transcrição */}
+            {/* Botão Nova Transcrição */}
+            {batchStatus === 'done' && (
               <button
                 onClick={handleReset}
                 className="w-full px-6 py-3 border-2 border-[#8B2323] rounded-lg font-semibold text-[#5C1515] hover:bg-[#8B2323]/10 transition-all"
               >
                 Nova Transcrição
               </button>
-            </div>
-          ) : null}
+            )}
+          </div>
 
-          {/* Erro */}
-          {error && (
-            <div className="mt-4 p-4 bg-red-50 border border-[#8B2323]/30 rounded-lg text-[#8B2323]">
-              {error}
+          {/* Instruções quando vazio */}
+          {!hasFiles && (
+            <div className="text-center text-gray-500 text-sm mt-4">
+              Selecione um ou mais arquivos de vídeo/áudio para começar
             </div>
           )}
         </div>
