@@ -95,8 +95,11 @@ export default function Transcritor() {
         setStatus('extracting');
         setUploadProgress(0);
 
-        // Guardar nome do arquivo sem extensão para usar no download
-        const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
+        // Guardar nome do arquivo sem extensão e sem qualidade (ex: "720p") para usar no download
+        const fileNameWithoutExt = file.name
+          .replace(/\.[^/.]+$/, '')           // Remove extensão (.mp4, .mov, etc)
+          .replace(/\s*\([^)]*\)\s*$/, '')    // Remove qualidade entre parênteses no final (720p), (1080p), etc
+          .trim();
         setSourceFileName(fileNameWithoutExt);
 
         const blob = await upload(file.name, file, {
