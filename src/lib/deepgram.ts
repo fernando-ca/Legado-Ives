@@ -90,22 +90,45 @@ export async function transcribeAudio(audioUrl: string): Promise<TranscriptionRe
   // Inicializa cliente apenas quando a função é chamada (não durante build)
   const deepgram = createClient(process.env.DEEPGRAM_API_KEY!);
 
-  // Baixa o áudio primeiro (necessário para URLs protegidas como Piped)
-  const audioBuffer = await downloadAudio(audioUrl);
+  // Verifica se é URL do Vercel Blob (pública, Deepgram pode acessar diretamente)
+  const isVercelBlob = audioUrl.includes('vercel-storage.com') || audioUrl.includes('blob.vercel-storage.com');
 
-  console.log('Enviando para Deepgram...');
+  let result;
 
-  const { result } = await deepgram.listen.prerecorded.transcribeFile(
-    audioBuffer,
-    {
-      model: 'nova-2',
-      language: 'pt-BR',
-      smart_format: true,
-      punctuate: true,
-      paragraphs: true,
-      // Deixa o Deepgram detectar o formato automaticamente
-    }
-  );
+  if (isVercelBlob) {
+    // URL pública - Deepgram acessa diretamente (mais rápido, evita timeout)
+    console.log('Enviando URL diretamente para Deepgram (Vercel Blob)...');
+
+    const response = await deepgram.listen.prerecorded.transcribeUrl(
+      { url: audioUrl },
+      {
+        model: 'nova-2',
+        language: 'pt-BR',
+        smart_format: true,
+        punctuate: true,
+        paragraphs: true,
+      }
+    );
+    result = response.result;
+  } else {
+    // URLs protegidas (YouTube/Piped) - precisa baixar primeiro
+    console.log('Baixando áudio antes de enviar para Deepgram...');
+    const audioBuffer = await downloadAudio(audioUrl);
+
+    console.log('Enviando buffer para Deepgram...');
+
+    const response = await deepgram.listen.prerecorded.transcribeFile(
+      audioBuffer,
+      {
+        model: 'nova-2',
+        language: 'pt-BR',
+        smart_format: true,
+        punctuate: true,
+        paragraphs: true,
+      }
+    );
+    result = response.result;
+  }
 
   if (!result) {
     throw new Error('Falha na transcrição: resultado vazio');
