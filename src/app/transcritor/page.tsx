@@ -19,6 +19,7 @@ export default function Transcritor() {
   const [result, setResult] = useState<TranscriptionResult | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [sourceFileName, setSourceFileName] = useState<string>('');
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -94,6 +95,10 @@ export default function Transcritor() {
         setStatus('extracting');
         setUploadProgress(0);
 
+        // Guardar nome do arquivo sem extensão para usar no download
+        const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
+        setSourceFileName(fileNameWithoutExt);
+
         const blob = await upload(file.name, file, {
           access: 'public',
           handleUploadUrl: '/api/upload',
@@ -149,6 +154,7 @@ export default function Transcritor() {
     setError(null);
     setResult(null);
     setUploadProgress(0);
+    setSourceFileName('');
   };
 
   const isProcessing = status === 'extracting' || status === 'transcribing';
@@ -317,13 +323,13 @@ export default function Transcritor() {
               {/* Botões de Download */}
               <div className="flex flex-col sm:flex-row gap-3">
                 <button
-                  onClick={() => downloadFile(result.transcript, 'transcricao.txt', 'text/plain')}
+                  onClick={() => downloadFile(result.transcript, `${sourceFileName || 'transcricao'}.txt`, 'text/plain')}
                   className="flex-1 bg-[#C9A962] hover:bg-[#B89A52] text-white py-3 px-6 rounded-lg font-semibold transition-all flex items-center justify-center gap-2"
                 >
                   📥 Baixar TXT
                 </button>
                 <button
-                  onClick={() => downloadFile(result.srt, 'legendas.srt', 'text/plain')}
+                  onClick={() => downloadFile(result.srt, `${sourceFileName || 'legendas'}.srt`, 'text/plain')}
                   className="flex-1 bg-[#5C1515] hover:bg-[#8B2323] text-white py-3 px-6 rounded-lg font-semibold transition-all flex items-center justify-center gap-2"
                 >
                   📥 Baixar SRT
