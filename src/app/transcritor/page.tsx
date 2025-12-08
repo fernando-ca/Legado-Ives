@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import Link from 'next/link';
+import { upload } from '@vercel/blob/client';
 
 type TranscriptionStatus = 'idle' | 'extracting' | 'transcribing' | 'done' | 'error';
 
@@ -17,6 +18,7 @@ export default function Transcritor() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<TranscriptionResult | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -88,23 +90,20 @@ export default function Transcritor() {
         const ytData = await ytResponse.json();
         audioUrl = ytData.audioUrl;
       } else if (file) {
-        // Upload do arquivo
+        // Upload do arquivo (client-side para suportar arquivos grandes)
         setStatus('extracting');
-        const formData = new FormData();
-        formData.append('file', file);
+        setUploadProgress(0);
 
-        const uploadResponse = await fetch('/api/upload', {
-          method: 'POST',
-          body: formData,
+        const blob = await upload(file.name, file, {
+          access: 'public',
+          handleUploadUrl: '/api/upload',
+          onUploadProgress: (progress) => {
+            const percent = Math.round((progress.loaded / progress.total) * 100);
+            setUploadProgress(percent);
+          },
         });
 
-        if (!uploadResponse.ok) {
-          const data = await uploadResponse.json();
-          throw new Error(data.error || 'Falha no upload do arquivo');
-        }
-
-        const uploadData = await uploadResponse.json();
-        audioUrl = uploadData.url;
+        audioUrl = blob.url;
       } else {
         throw new Error('Selecione um arquivo ou cole uma URL do YouTube');
       }
@@ -149,6 +148,7 @@ export default function Transcritor() {
     setStatus('idle');
     setError(null);
     setResult(null);
+    setUploadProgress(0);
   };
 
   const isProcessing = status === 'extracting' || status === 'transcribing';
@@ -280,9 +280,18 @@ export default function Transcritor() {
                       <span className="text-green-500 text-xl">✓</span>
                     )}
                     <span className={status === 'extracting' ? 'text-gray-700' : 'text-gray-400'}>
-                      {youtubeUrl ? 'Extraindo áudio do YouTube...' : 'Enviando arquivo...'}
+                      {youtubeUrl ? 'Extraindo áudio do YouTube...' : `Enviando arquivo... ${uploadProgress > 0 ? `${uploadProgress}%` : ''}`}
                     </span>
                   </div>
+                  {/* Barra de progresso para upload de arquivo */}
+                  {status === 'extracting' && !youtubeUrl && uploadProgress > 0 && (
+                    <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
+                      <div
+                        className="bg-[#C9A962] h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${uploadProgress}%` }}
+                      />
+                    </div>
+                  )}
 
                   <div className="flex items-center gap-3">
                     {status === 'transcribing' ? (
