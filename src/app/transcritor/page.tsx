@@ -90,15 +90,24 @@ export default function Transcritor() {
     setFiles(prev => prev.filter(f => f.id !== id));
   }, []);
 
+  // Helper: Promise com timeout
+  const withTimeout = <T,>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> => {
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(errorMsg)), ms)
+    );
+    return Promise.race([promise, timeout]);
+  };
+
   // Processa um único arquivo
   const processFile = useCallback(async (batchFile: BatchFile) => {
     const { id, file } = batchFile;
+    let blobUrl: string | null = null;
 
     try {
-      // 1. Upload
+      // 1. Upload (timeout de 5 minutos)
       updateFileStatus(id, { status: 'uploading', uploadProgress: 0 });
 
-      const blob = await upload(file.name, file, {
+      const uploadPromise = upload(file.name, file, {
         access: 'public',
         handleUploadUrl: '/api/upload',
         onUploadProgress: (progress) => {
@@ -109,17 +118,22 @@ export default function Transcritor() {
         },
       });
 
-      // 2. Transcrição
+      const blob = await withTimeout(uploadPromise, 300000, 'Upload demorou muito (timeout 5min)');
+      blobUrl = blob.url;
+
+      // 2. Transcrição (timeout de 3 minutos)
       updateFileStatus(id, { status: 'transcribing' });
 
-      const response = await fetch('/api/transcribe', {
+      const transcribePromise = fetch('/api/transcribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ audioUrl: blob.url }),
       });
 
+      const response = await withTimeout(transcribePromise, 180000, 'Transcrição demorou muito (timeout 3min)');
+
       if (!response.ok) {
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
         throw new Error(data.error || 'Falha na transcrição');
       }
 
@@ -139,6 +153,15 @@ export default function Transcritor() {
       }).catch(() => {});
 
     } catch (err) {
+      // Tenta limpar o blob se upload foi feito mas transcrição falhou
+      if (blobUrl) {
+        await fetch('/api/upload', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: blobUrl }),
+        }).catch(() => {});
+      }
+
       updateFileStatus(id, {
         status: 'error',
         error: err instanceof Error ? err.message : 'Erro desconhecido'
