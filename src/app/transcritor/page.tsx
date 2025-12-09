@@ -102,7 +102,9 @@ export default function Transcritor() {
         access: 'public',
         handleUploadUrl: '/api/upload',
         onUploadProgress: (progress) => {
-          const percent = Math.round((progress.loaded / progress.total) * 100);
+          const percent = progress.total > 0
+            ? Math.round((progress.loaded / progress.total) * 100)
+            : 0;
           updateFileStatus(id, { uploadProgress: percent });
         },
       });
