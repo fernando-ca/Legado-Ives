@@ -98,6 +98,9 @@ export default function Transcritor() {
     return Promise.race([promise, timeout]);
   };
 
+  // Helper: delay para retry
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
   // Processa um único arquivo
   const processFile = useCallback(async (batchFile: BatchFile) => {
     const { id, file } = batchFile;
@@ -121,23 +124,44 @@ export default function Transcritor() {
       const blob = await withTimeout(uploadPromise, 300000, 'Upload demorou muito (timeout 5min)');
       blobUrl = blob.url;
 
-      // 2. Transcrição (timeout de 3 minutos)
+      // 2. Transcrição com retry (2 tentativas, delay de 3s)
       updateFileStatus(id, { status: 'transcribing' });
 
-      const transcribePromise = fetch('/api/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ audioUrl: blob.url }),
-      });
+      let data;
+      let lastError: Error | null = null;
+      const MAX_RETRIES = 2;
 
-      const response = await withTimeout(transcribePromise, 180000, 'Transcrição demorou muito (timeout 3min)');
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          const transcribePromise = fetch('/api/transcribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audioUrl: blob.url }),
+          });
 
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || 'Falha na transcrição');
+          const response = await withTimeout(transcribePromise, 300000, 'Transcrição demorou muito (timeout 5min)');
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || 'Falha na transcrição');
+          }
+
+          data = await response.json();
+          break; // Sucesso, sai do loop
+
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error('Erro desconhecido');
+          console.log(`Tentativa ${attempt}/${MAX_RETRIES} falhou:`, lastError.message);
+
+          if (attempt < MAX_RETRIES) {
+            await delay(3000); // Aguarda 3s antes de tentar novamente
+          }
+        }
       }
 
-      const data = await response.json();
+      if (!data) {
+        throw lastError || new Error('Falha na transcrição após múltiplas tentativas');
+      }
 
       // 3. Salvar resultado
       updateFileStatus(id, {
@@ -175,12 +199,10 @@ export default function Transcritor() {
     setError(null);
 
     const pendingFiles = files.filter(f => f.status === 'pending');
-    const CONCURRENCY = 2;
 
-    // Processa em lotes de 2
-    for (let i = 0; i < pendingFiles.length; i += CONCURRENCY) {
-      const batch = pendingFiles.slice(i, i + CONCURRENCY);
-      await Promise.all(batch.map(processFile));
+    // Processa um arquivo por vez para evitar rate limit e sobrecarga
+    for (const file of pendingFiles) {
+      await processFile(file);
     }
 
     setBatchStatus('done');

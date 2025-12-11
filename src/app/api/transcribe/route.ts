@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { transcribeAudio } from '@/lib/deepgram';
 import { generateSRT } from '@/lib/srtGenerator';
 
-export const maxDuration = 60; // Aumenta timeout para 60s (Vercel Pro)
+export const maxDuration = 300; // 5 minutos - máximo para arquivos grandes (Vercel Pro)
 
 export async function POST(request: Request) {
   try {
