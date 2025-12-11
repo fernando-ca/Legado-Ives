@@ -265,10 +265,12 @@ export default function Transcritor() {
     setError(null);
 
     const pendingFiles = files.filter(f => f.status === 'pending');
+    const CONCURRENCY = 2; // Processa 2 arquivos por vez
 
-    // Processa um arquivo por vez para evitar rate limit e sobrecarga
-    for (const file of pendingFiles) {
-      await processFile(file);
+    // Processa em lotes de 2 com retry automático
+    for (let i = 0; i < pendingFiles.length; i += CONCURRENCY) {
+      const batch = pendingFiles.slice(i, i + CONCURRENCY);
+      await Promise.all(batch.map(processFile));
     }
 
     setBatchStatus('done');
