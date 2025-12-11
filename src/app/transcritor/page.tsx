@@ -107,22 +107,45 @@ export default function Transcritor() {
     const { id, file } = batchFile;
     let blobUrl: string | null = null;
 
+    // Timeout baseado no tamanho: 10min para >100MB, 5min para menores
+    const uploadTimeout = file.size > 100 * 1024 * 1024 ? 600000 : 300000;
+
     try {
-      // 1. Upload (timeout de 5 minutos)
+      // 1. Upload com retry (3 tentativas)
       updateFileStatus(id, { status: 'uploading', uploadProgress: 0 });
 
-      const uploadPromise = upload(file.name, file, {
-        access: 'public',
-        handleUploadUrl: '/api/upload',
-        onUploadProgress: (progress) => {
-          const percent = progress.total > 0
-            ? Math.round((progress.loaded / progress.total) * 100)
-            : 0;
-          updateFileStatus(id, { uploadProgress: percent });
-        },
-      });
+      let blob;
+      let uploadError: Error | null = null;
 
-      const blob = await withTimeout(uploadPromise, 300000, 'Upload demorou muito (timeout 5min)');
+      for (let uploadAttempt = 1; uploadAttempt <= 3; uploadAttempt++) {
+        try {
+          const uploadPromise = upload(file.name, file, {
+            access: 'public',
+            handleUploadUrl: '/api/upload',
+            onUploadProgress: (progress) => {
+              const percent = progress.total > 0
+                ? Math.round((progress.loaded / progress.total) * 100)
+                : 0;
+              updateFileStatus(id, { uploadProgress: percent });
+            },
+          });
+
+          blob = await withTimeout(uploadPromise, uploadTimeout, `Upload demorou muito (timeout ${uploadTimeout / 60000}min)`);
+          break; // Sucesso
+        } catch (err) {
+          uploadError = err instanceof Error ? err : new Error('Erro no upload');
+          console.log(`Upload tentativa ${uploadAttempt}/3 falhou:`, uploadError.message);
+          if (uploadAttempt < 3) {
+            updateFileStatus(id, { uploadProgress: 0 });
+            await delay(3000);
+          }
+        }
+      }
+
+      if (!blob) {
+        throw uploadError || new Error('Falha no upload após múltiplas tentativas');
+      }
+
       blobUrl = blob.url;
 
       // Salva URL do blob no estado para permitir retry
@@ -265,12 +288,21 @@ export default function Transcritor() {
     setError(null);
 
     const pendingFiles = files.filter(f => f.status === 'pending');
-    const CONCURRENCY = 2; // Processa 2 arquivos por vez
 
-    // Processa em lotes de 2 com retry automático
-    for (let i = 0; i < pendingFiles.length; i += CONCURRENCY) {
-      const batch = pendingFiles.slice(i, i + CONCURRENCY);
+    // Separa arquivos grandes (>100MB) dos pequenos
+    const LARGE_FILE_THRESHOLD = 100 * 1024 * 1024; // 100MB
+    const largeFiles = pendingFiles.filter(f => f.file.size > LARGE_FILE_THRESHOLD);
+    const smallFiles = pendingFiles.filter(f => f.file.size <= LARGE_FILE_THRESHOLD);
+
+    // Processa arquivos pequenos em pares (2 por vez)
+    for (let i = 0; i < smallFiles.length; i += 2) {
+      const batch = smallFiles.slice(i, i + 2);
       await Promise.all(batch.map(processFile));
+    }
+
+    // Processa arquivos grandes um por vez (precisam de banda total)
+    for (const file of largeFiles) {
+      await processFile(file);
     }
 
     setBatchStatus('done');
@@ -434,13 +466,19 @@ export default function Transcritor() {
 
                       {file.status === 'uploading' && (
                         <div className="flex items-center gap-2">
-                          <div className="w-16 bg-gray-200 rounded-full h-1.5">
-                            <div
-                              className="bg-[#C9A962] h-1.5 rounded-full transition-all duration-300"
-                              style={{ width: `${file.uploadProgress}%` }}
-                            />
-                          </div>
-                          <span className="text-xs text-gray-500 w-8">{file.uploadProgress}%</span>
+                          {file.uploadProgress === 0 ? (
+                            <span className="text-xs text-orange-500 animate-pulse">Preparando...</span>
+                          ) : (
+                            <>
+                              <div className="w-16 bg-gray-200 rounded-full h-1.5">
+                                <div
+                                  className="bg-[#C9A962] h-1.5 rounded-full transition-all duration-300"
+                                  style={{ width: `${file.uploadProgress}%` }}
+                                />
+                              </div>
+                              <span className="text-xs text-gray-500 w-8">{file.uploadProgress}%</span>
+                            </>
+                          )}
                         </div>
                       )}
 
