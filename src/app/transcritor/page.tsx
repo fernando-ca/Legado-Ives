@@ -12,6 +12,7 @@ interface BatchFile {
   fileName: string;
   status: 'pending' | 'uploading' | 'transcribing' | 'done' | 'error';
   uploadProgress: number;
+  blobUrl?: string; // URL do blob para retry
   result?: {
     transcript: string;
     srt: string;
@@ -124,12 +125,15 @@ export default function Transcritor() {
       const blob = await withTimeout(uploadPromise, 300000, 'Upload demorou muito (timeout 5min)');
       blobUrl = blob.url;
 
-      // 2. Transcrição com retry (2 tentativas, delay de 3s)
+      // Salva URL do blob no estado para permitir retry
+      updateFileStatus(id, { blobUrl: blob.url });
+
+      // 2. Transcrição com retry (3 tentativas, delay de 5s)
       updateFileStatus(id, { status: 'transcribing' });
 
       let data;
       let lastError: Error | null = null;
-      const MAX_RETRIES = 2;
+      const MAX_RETRIES = 3;
 
       for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
@@ -154,7 +158,7 @@ export default function Transcritor() {
           console.log(`Tentativa ${attempt}/${MAX_RETRIES} falhou:`, lastError.message);
 
           if (attempt < MAX_RETRIES) {
-            await delay(3000); // Aguarda 3s antes de tentar novamente
+            await delay(5000); // Aguarda 5s antes de tentar novamente
           }
         }
       }
@@ -177,21 +181,83 @@ export default function Transcritor() {
       }).catch(() => {});
 
     } catch (err) {
-      // Tenta limpar o blob se upload foi feito mas transcrição falhou
-      if (blobUrl) {
-        await fetch('/api/upload', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: blobUrl }),
-        }).catch(() => {});
-      }
-
+      // NÃO deleta o blob em caso de erro - permite retry sem re-upload
       updateFileStatus(id, {
         status: 'error',
         error: err instanceof Error ? err.message : 'Erro desconhecido'
       });
     }
   }, [updateFileStatus]);
+
+  // Retry de um arquivo que falhou (usa blobUrl salvo)
+  const retryFile = useCallback(async (batchFile: BatchFile) => {
+    const { id, blobUrl, file } = batchFile;
+
+    // Se não tem blobUrl, precisa fazer upload novamente
+    if (!blobUrl) {
+      updateFileStatus(id, { status: 'pending', error: undefined });
+      await processFile(batchFile);
+      return;
+    }
+
+    try {
+      updateFileStatus(id, { status: 'transcribing', error: undefined });
+
+      let data;
+      let lastError: Error | null = null;
+      const MAX_RETRIES = 3;
+
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          const transcribePromise = fetch('/api/transcribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audioUrl: blobUrl }),
+          });
+
+          const response = await withTimeout(transcribePromise, 300000, 'Transcrição demorou muito (timeout 5min)');
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || 'Falha na transcrição');
+          }
+
+          data = await response.json();
+          break;
+
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error('Erro desconhecido');
+          console.log(`Retry tentativa ${attempt}/${MAX_RETRIES} falhou:`, lastError.message);
+
+          if (attempt < MAX_RETRIES) {
+            await delay(5000);
+          }
+        }
+      }
+
+      if (!data) {
+        throw lastError || new Error('Falha na transcrição após múltiplas tentativas');
+      }
+
+      updateFileStatus(id, {
+        status: 'done',
+        result: { transcript: data.transcript, srt: data.srt }
+      });
+
+      // Limpa blob após sucesso
+      await fetch('/api/upload', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: blobUrl }),
+      }).catch(() => {});
+
+    } catch (err) {
+      updateFileStatus(id, {
+        status: 'error',
+        error: err instanceof Error ? err.message : 'Erro desconhecido'
+      });
+    }
+  }, [updateFileStatus, processFile]);
 
   // Processa todos os arquivos com concorrência controlada
   const processAllFiles = useCallback(async () => {
@@ -389,6 +455,17 @@ export default function Transcritor() {
                       )}
                     </div>
 
+                    {/* Botão retry para arquivos com erro */}
+                    {!isProcessing && file.status === 'error' && (
+                      <button
+                        onClick={() => retryFile(file)}
+                        className="text-xs px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded flex-shrink-0"
+                        title="Tentar novamente"
+                      >
+                        Retry
+                      </button>
+                    )}
+
                     {/* Botão remover */}
                     {!isProcessing && file.status !== 'uploading' && file.status !== 'transcribing' && (
                       <button
@@ -447,6 +524,23 @@ export default function Transcritor() {
                 <div className="w-6 h-6 border-3 border-[#C9A962] border-t-transparent rounded-full animate-spin" />
                 <span className="text-gray-600">Processando transcrições...</span>
               </div>
+            )}
+
+            {/* Botão Reprocessar Erros */}
+            {!isProcessing && errorCount > 0 && (
+              <button
+                onClick={async () => {
+                  setBatchStatus('processing');
+                  const errorFiles = files.filter(f => f.status === 'error');
+                  for (const file of errorFiles) {
+                    await retryFile(file);
+                  }
+                  setBatchStatus('done');
+                }}
+                className="w-full bg-orange-500 hover:bg-orange-600 text-white py-3 px-6 rounded-lg font-semibold transition-all flex items-center justify-center gap-2"
+              >
+                🔄 Reprocessar {errorCount} {errorCount === 1 ? 'arquivo com erro' : 'arquivos com erro'}
+              </button>
             )}
 
             {/* Botão Download ZIP */}
