@@ -28,8 +28,12 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error('Erro na transcrição:', error);
+
+    // Retorna erro específico em vez de genérico
+    const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido na transcrição';
+
     return NextResponse.json(
-      { error: 'Falha na transcrição' },
+      { error: errorMessage },
       { status: 500 }
     );
   }

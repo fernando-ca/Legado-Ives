@@ -87,47 +87,73 @@ async function downloadAudio(url: string): Promise<Buffer> {
 }
 
 export async function transcribeAudio(audioUrl: string): Promise<TranscriptionResult> {
+  // Verifica se a API key está configurada
+  if (!process.env.DEEPGRAM_API_KEY) {
+    throw new Error('DEEPGRAM_API_KEY não configurada - verifique as variáveis de ambiente');
+  }
+
   // Inicializa cliente apenas quando a função é chamada (não durante build)
-  const deepgram = createClient(process.env.DEEPGRAM_API_KEY!);
+  const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
   // Verifica se é URL do Vercel Blob (pública, Deepgram pode acessar diretamente)
   const isVercelBlob = audioUrl.includes('vercel-storage.com') || audioUrl.includes('blob.vercel-storage.com');
 
   let result;
 
-  if (isVercelBlob) {
-    // URL pública - Deepgram acessa diretamente (mais rápido, evita timeout)
-    console.log('Enviando URL diretamente para Deepgram (Vercel Blob)...');
+  try {
+    if (isVercelBlob) {
+      // URL pública - Deepgram acessa diretamente (mais rápido, evita timeout)
+      console.log('Enviando URL diretamente para Deepgram (Vercel Blob)...');
 
-    const response = await deepgram.listen.prerecorded.transcribeUrl(
-      { url: audioUrl },
-      {
-        model: 'nova-2',
-        language: 'pt-BR',
-        smart_format: true,
-        punctuate: true,
-        paragraphs: true,
-      }
-    );
-    result = response.result;
-  } else {
-    // URLs protegidas (YouTube/Piped) - precisa baixar primeiro
-    console.log('Baixando áudio antes de enviar para Deepgram...');
-    const audioBuffer = await downloadAudio(audioUrl);
+      const response = await deepgram.listen.prerecorded.transcribeUrl(
+        { url: audioUrl },
+        {
+          model: 'nova-2',
+          language: 'pt-BR',
+          smart_format: true,
+          punctuate: true,
+          paragraphs: true,
+        }
+      );
+      result = response.result;
+    } else {
+      // URLs protegidas (YouTube/Piped) - precisa baixar primeiro
+      console.log('Baixando áudio antes de enviar para Deepgram...');
+      const audioBuffer = await downloadAudio(audioUrl);
 
-    console.log('Enviando buffer para Deepgram...');
+      console.log('Enviando buffer para Deepgram...');
 
-    const response = await deepgram.listen.prerecorded.transcribeFile(
-      audioBuffer,
-      {
-        model: 'nova-2',
-        language: 'pt-BR',
-        smart_format: true,
-        punctuate: true,
-        paragraphs: true,
-      }
-    );
-    result = response.result;
+      const response = await deepgram.listen.prerecorded.transcribeFile(
+        audioBuffer,
+        {
+          model: 'nova-2',
+          language: 'pt-BR',
+          smart_format: true,
+          punctuate: true,
+          paragraphs: true,
+        }
+      );
+      result = response.result;
+    }
+  } catch (err) {
+    // Identifica erros específicos do Deepgram
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error('Erro do Deepgram:', errorMsg);
+
+    if (errorMsg.includes('401') || errorMsg.includes('Unauthorized')) {
+      throw new Error('Chave do Deepgram inválida - verifique DEEPGRAM_API_KEY');
+    }
+    if (errorMsg.includes('402') || errorMsg.includes('Payment Required') || errorMsg.includes('quota')) {
+      throw new Error('Quota do Deepgram esgotada - adicione créditos em console.deepgram.com');
+    }
+    if (errorMsg.includes('429') || errorMsg.includes('Too Many Requests')) {
+      throw new Error('Muitas requisições simultâneas - aguarde alguns segundos e tente novamente');
+    }
+    if (errorMsg.includes('timeout') || errorMsg.includes('ETIMEDOUT')) {
+      throw new Error('Timeout na conexão com Deepgram - tente novamente');
+    }
+
+    throw err;
   }
 
   if (!result) {
