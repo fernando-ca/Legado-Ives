@@ -6,13 +6,27 @@ import { upload } from '@vercel/blob/client';
 import JSZip from 'jszip';
 
 // Types
+interface UrlItem {
+  id: string;
+  url: string;
+  title: string;
+  status: 'pending' | 'extracting' | 'transcribing' | 'refining' | 'done' | 'error';
+  result?: string;
+  error?: string;
+  metadata?: {
+    title: string;
+    date: string;
+    guest: string;
+  };
+}
+
 interface BatchFile {
   id: string;
   file: File;
   fileName: string;
   status: 'pending' | 'uploading' | 'transcribing' | 'done' | 'error';
   uploadProgress: number;
-  blobUrl?: string; // URL do blob para retry
+  blobUrl?: string;
   result?: {
     transcript: string;
     srt: string;
@@ -20,38 +34,270 @@ interface BatchFile {
   error?: string;
 }
 
+type TabType = 'url' | 'batch' | 'files';
 type BatchStatus = 'idle' | 'processing' | 'done';
 
 // Validação de tipos de arquivo
 const VALID_TYPES = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm', 'audio/mpeg', 'audio/wav', 'audio/mp4', 'audio/x-m4a'];
 const VALID_EXTENSIONS = /\.(mp4|mov|avi|webm|mp3|wav|m4a)$/i;
 
-// Função para limpar nome do arquivo
 const cleanFileName = (name: string): string => {
   return name
-    .replace(/\.[^/.]+$/, '')           // Remove extensão
-    .replace(/\s*\([^)]*\)\s*$/, '')    // Remove qualidade entre parênteses
+    .replace(/\.[^/.]+$/, '')
+    .replace(/\s*\([^)]*\)\s*$/, '')
     .trim();
 };
 
-// Função para validar arquivo
 const isValidFile = (file: File): boolean => {
   return VALID_TYPES.some(type => file.type.includes(type.split('/')[1])) ||
          VALID_EXTENSIONS.test(file.name);
 };
 
+// Extrai nome amigável da URL
+const extractNameFromUrl = (url: string): string => {
+  try {
+    const urlObj = new URL(url);
+    const pathname = urlObj.pathname;
+    const lastPart = pathname.split('/').filter(Boolean).pop() || '';
+    return lastPart.replace(/-/g, ' ').replace(/\d{2}-\d{2}-\d{4}/, '').trim() || 'Entrevista';
+  } catch {
+    return 'Entrevista';
+  }
+};
+
 export default function Transcritor() {
+  // Tab state
+  const [activeTab, setActiveTab] = useState<TabType>('url');
+
+  // URL única
+  const [singleUrl, setSingleUrl] = useState('');
+  const [singleUrlStatus, setSingleUrlStatus] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
+  const [singleUrlResult, setSingleUrlResult] = useState<string | null>(null);
+  const [singleUrlError, setSingleUrlError] = useState<string | null>(null);
+  const [singleUrlProgress, setSingleUrlProgress] = useState('');
+
+  // Batch URLs
+  const [batchUrls, setBatchUrls] = useState('');
+  const [urlItems, setUrlItems] = useState<UrlItem[]>([]);
+  const [urlBatchStatus, setUrlBatchStatus] = useState<BatchStatus>('idle');
+
+  // Files (existente)
   const [files, setFiles] = useState<BatchFile[]>([]);
-  const [batchStatus, setBatchStatus] = useState<BatchStatus>('idle');
+  const [fileBatchStatus, setFileBatchStatus] = useState<BatchStatus>('idle');
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Atualiza status de um arquivo específico
+  // Helper: Promise com timeout
+  const withTimeout = <T,>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> => {
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(errorMsg)), ms)
+    );
+    return Promise.race([promise, timeout]);
+  };
+
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+  // ==================== URL ÚNICA ====================
+
+  const processUrlItem = async (url: string, onProgress: (msg: string) => void): Promise<string> => {
+    // 1. Extrair áudio
+    onProgress('Extraindo áudio do vídeo...');
+    const audioResponse = await withTimeout(
+      fetch('/api/video-audio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      }),
+      60000,
+      'Timeout ao extrair áudio'
+    );
+
+    if (!audioResponse.ok) {
+      const errorData = await audioResponse.json().catch(() => ({}));
+      throw new Error(errorData.error || 'Erro ao extrair áudio');
+    }
+
+    const { audioUrl, metadata } = await audioResponse.json();
+
+    // 2. Transcrever
+    onProgress('Transcrevendo áudio...');
+    const transcribeResponse = await withTimeout(
+      fetch('/api/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audioUrl }),
+      }),
+      300000,
+      'Timeout na transcrição'
+    );
+
+    if (!transcribeResponse.ok) {
+      const errorData = await transcribeResponse.json().catch(() => ({}));
+      throw new Error(errorData.error || 'Erro na transcrição');
+    }
+
+    const { transcript } = await transcribeResponse.json();
+
+    // 3. Refinar com Claude
+    onProgress('Refinando transcrição com IA...');
+    const refineResponse = await withTimeout(
+      fetch('/api/refine', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript,
+          title: metadata?.title || 'Entrevista',
+          date: metadata?.date || '',
+          guest: metadata?.guest || '',
+        }),
+      }),
+      120000,
+      'Timeout no refinamento'
+    );
+
+    if (!refineResponse.ok) {
+      const errorData = await refineResponse.json().catch(() => ({}));
+      // Se o refinamento falhar, retorna transcrição bruta
+      console.warn('Refinamento falhou, usando transcrição bruta:', errorData.error);
+      return transcript;
+    }
+
+    const { refined } = await refineResponse.json();
+    return refined || transcript;
+  };
+
+  const processSingleUrl = async () => {
+    if (!singleUrl.trim()) return;
+
+    setSingleUrlStatus('processing');
+    setSingleUrlError(null);
+    setSingleUrlResult(null);
+    setSingleUrlProgress('Iniciando...');
+
+    try {
+      const result = await processUrlItem(singleUrl.trim(), setSingleUrlProgress);
+      setSingleUrlResult(result);
+      setSingleUrlStatus('done');
+      setSingleUrlProgress('');
+    } catch (err) {
+      setSingleUrlError(err instanceof Error ? err.message : 'Erro desconhecido');
+      setSingleUrlStatus('error');
+      setSingleUrlProgress('');
+    }
+  };
+
+  const downloadSingleResult = () => {
+    if (!singleUrlResult) return;
+
+    const blob = new Blob([singleUrlResult], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `transcricao_${extractNameFromUrl(singleUrl)}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // ==================== BATCH URLs ====================
+
+  const parseUrls = (text: string): string[] => {
+    return text
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0 && (line.startsWith('http://') || line.startsWith('https://')));
+  };
+
+  const urlCount = parseUrls(batchUrls).length;
+
+  const addUrlsToQueue = () => {
+    const urls = parseUrls(batchUrls);
+    const items: UrlItem[] = urls.map(url => ({
+      id: crypto.randomUUID(),
+      url,
+      title: extractNameFromUrl(url),
+      status: 'pending',
+    }));
+    setUrlItems(prev => [...prev, ...items]);
+    setBatchUrls('');
+  };
+
+  const updateUrlItemStatus = useCallback((id: string, updates: Partial<UrlItem>) => {
+    setUrlItems(prev => prev.map(item => item.id === id ? { ...item, ...updates } : item));
+  }, []);
+
+  const processUrlBatch = async () => {
+    setUrlBatchStatus('processing');
+
+    const pendingItems = urlItems.filter(item => item.status === 'pending');
+
+    for (const item of pendingItems) {
+      try {
+        updateUrlItemStatus(item.id, { status: 'extracting' });
+
+        const result = await processUrlItem(item.url, (progress) => {
+          // Atualiza status baseado no progresso
+          if (progress.includes('Extraindo')) {
+            updateUrlItemStatus(item.id, { status: 'extracting' });
+          } else if (progress.includes('Transcrevendo')) {
+            updateUrlItemStatus(item.id, { status: 'transcribing' });
+          } else if (progress.includes('Refinando')) {
+            updateUrlItemStatus(item.id, { status: 'refining' });
+          }
+        });
+
+        updateUrlItemStatus(item.id, { status: 'done', result });
+
+        // Delay entre itens para evitar rate limiting
+        await delay(2000);
+
+      } catch (err) {
+        updateUrlItemStatus(item.id, {
+          status: 'error',
+          error: err instanceof Error ? err.message : 'Erro desconhecido'
+        });
+      }
+    }
+
+    setUrlBatchStatus('done');
+  };
+
+  const downloadUrlResults = async () => {
+    const zip = new JSZip();
+    const completedItems = urlItems.filter(item => item.status === 'done' && item.result);
+
+    completedItems.forEach((item, index) => {
+      const filename = `${String(index + 1).padStart(2, '0')}_${item.title.substring(0, 50).replace(/[^a-zA-Z0-9\s]/g, '')}.txt`;
+      zip.file(filename, item.result!);
+    });
+
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `transcricoes_${new Date().toISOString().split('T')[0]}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const removeUrlItem = (id: string) => {
+    setUrlItems(prev => prev.filter(item => item.id !== id));
+  };
+
+  const clearUrlItems = () => {
+    setUrlItems([]);
+    setUrlBatchStatus('idle');
+  };
+
+  // ==================== FILES (existente) ====================
+
   const updateFileStatus = useCallback((id: string, updates: Partial<BatchFile>) => {
     setFiles(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
   }, []);
 
-  // Adiciona arquivos à lista
   const addFiles = useCallback((newFiles: File[]) => {
     const validFiles = newFiles.filter(isValidFile);
 
@@ -71,7 +317,6 @@ export default function Transcritor() {
     setError(null);
   }, []);
 
-  // Handle drag and drop
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragActive(false);
@@ -79,39 +324,21 @@ export default function Transcritor() {
     addFiles(droppedFiles);
   }, [addFiles]);
 
-  // Handle file input
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(e.target.files || []);
     addFiles(selectedFiles);
-    e.target.value = ''; // Reset input para permitir selecionar os mesmos arquivos novamente
+    e.target.value = '';
   };
 
-  // Remove arquivo da lista
   const removeFile = useCallback((id: string) => {
     setFiles(prev => prev.filter(f => f.id !== id));
   }, []);
 
-  // Helper: Promise com timeout
-  const withTimeout = <T,>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> => {
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(errorMsg)), ms)
-    );
-    return Promise.race([promise, timeout]);
-  };
-
-  // Helper: delay para retry
-  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-  // Processa um único arquivo
   const processFile = useCallback(async (batchFile: BatchFile) => {
     const { id, file } = batchFile;
-    let blobUrl: string | null = null;
-
-    // Timeout baseado no tamanho: 10min para >100MB, 5min para menores
     const uploadTimeout = file.size > 100 * 1024 * 1024 ? 600000 : 300000;
 
     try {
-      // 1. Upload com retry (3 tentativas)
       updateFileStatus(id, { status: 'uploading', uploadProgress: 0 });
 
       let blob;
@@ -130,11 +357,10 @@ export default function Transcritor() {
             },
           });
 
-          blob = await withTimeout(uploadPromise, uploadTimeout, `Upload demorou muito (timeout ${uploadTimeout / 60000}min)`);
-          break; // Sucesso
+          blob = await withTimeout(uploadPromise, uploadTimeout, `Upload timeout`);
+          break;
         } catch (err) {
           uploadError = err instanceof Error ? err : new Error('Erro no upload');
-          console.log(`Upload tentativa ${uploadAttempt}/3 falhou:`, uploadError.message);
           if (uploadAttempt < 3) {
             updateFileStatus(id, { uploadProgress: 0 });
             await delay(3000);
@@ -143,102 +369,25 @@ export default function Transcritor() {
       }
 
       if (!blob) {
-        throw uploadError || new Error('Falha no upload após múltiplas tentativas');
+        throw uploadError || new Error('Falha no upload');
       }
 
-      blobUrl = blob.url;
-
-      // Salva URL do blob no estado para permitir retry
-      updateFileStatus(id, { blobUrl: blob.url });
-
-      // 2. Transcrição com retry (3 tentativas, delay de 5s)
-      updateFileStatus(id, { status: 'transcribing' });
+      updateFileStatus(id, { blobUrl: blob.url, status: 'transcribing' });
 
       let data;
       let lastError: Error | null = null;
-      const MAX_RETRIES = 3;
 
-      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          const transcribePromise = fetch('/api/transcribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ audioUrl: blob.url }),
-          });
-
-          const response = await withTimeout(transcribePromise, 300000, 'Transcrição demorou muito (timeout 5min)');
-
-          if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error || 'Falha na transcrição');
-          }
-
-          data = await response.json();
-          break; // Sucesso, sai do loop
-
-        } catch (err) {
-          lastError = err instanceof Error ? err : new Error('Erro desconhecido');
-          console.log(`Tentativa ${attempt}/${MAX_RETRIES} falhou:`, lastError.message);
-
-          if (attempt < MAX_RETRIES) {
-            await delay(5000); // Aguarda 5s antes de tentar novamente
-          }
-        }
-      }
-
-      if (!data) {
-        throw lastError || new Error('Falha na transcrição após múltiplas tentativas');
-      }
-
-      // 3. Salvar resultado
-      updateFileStatus(id, {
-        status: 'done',
-        result: { transcript: data.transcript, srt: data.srt }
-      });
-
-      // 4. Limpar arquivo do Blob
-      await fetch('/api/upload', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: blob.url }),
-      }).catch(() => {});
-
-    } catch (err) {
-      // NÃO deleta o blob em caso de erro - permite retry sem re-upload
-      updateFileStatus(id, {
-        status: 'error',
-        error: err instanceof Error ? err.message : 'Erro desconhecido'
-      });
-    }
-  }, [updateFileStatus]);
-
-  // Retry de um arquivo que falhou (usa blobUrl salvo)
-  const retryFile = useCallback(async (batchFile: BatchFile) => {
-    const { id, blobUrl, file } = batchFile;
-
-    // Se não tem blobUrl, precisa fazer upload novamente
-    if (!blobUrl) {
-      updateFileStatus(id, { status: 'pending', error: undefined });
-      await processFile(batchFile);
-      return;
-    }
-
-    try {
-      updateFileStatus(id, { status: 'transcribing', error: undefined });
-
-      let data;
-      let lastError: Error | null = null;
-      const MAX_RETRIES = 3;
-
-      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-        try {
-          const transcribePromise = fetch('/api/transcribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ audioUrl: blobUrl }),
-          });
-
-          const response = await withTimeout(transcribePromise, 300000, 'Transcrição demorou muito (timeout 5min)');
+          const response = await withTimeout(
+            fetch('/api/transcribe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ audioUrl: blob.url }),
+            }),
+            300000,
+            'Transcrição timeout'
+          );
 
           if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
@@ -247,19 +396,14 @@ export default function Transcritor() {
 
           data = await response.json();
           break;
-
         } catch (err) {
           lastError = err instanceof Error ? err : new Error('Erro desconhecido');
-          console.log(`Retry tentativa ${attempt}/${MAX_RETRIES} falhou:`, lastError.message);
-
-          if (attempt < MAX_RETRIES) {
-            await delay(5000);
-          }
+          if (attempt < 3) await delay(5000);
         }
       }
 
       if (!data) {
-        throw lastError || new Error('Falha na transcrição após múltiplas tentativas');
+        throw lastError || new Error('Falha na transcrição');
       }
 
       updateFileStatus(id, {
@@ -267,11 +411,10 @@ export default function Transcritor() {
         result: { transcript: data.transcript, srt: data.srt }
       });
 
-      // Limpa blob após sucesso
       await fetch('/api/upload', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: blobUrl }),
+        body: JSON.stringify({ url: blob.url }),
       }).catch(() => {});
 
     } catch (err) {
@@ -280,36 +423,30 @@ export default function Transcritor() {
         error: err instanceof Error ? err.message : 'Erro desconhecido'
       });
     }
-  }, [updateFileStatus, processFile]);
+  }, [updateFileStatus]);
 
-  // Processa todos os arquivos com concorrência controlada
   const processAllFiles = useCallback(async () => {
-    setBatchStatus('processing');
+    setFileBatchStatus('processing');
     setError(null);
 
     const pendingFiles = files.filter(f => f.status === 'pending');
-
-    // Separa arquivos grandes (>100MB) dos pequenos
-    const LARGE_FILE_THRESHOLD = 100 * 1024 * 1024; // 100MB
+    const LARGE_FILE_THRESHOLD = 100 * 1024 * 1024;
     const largeFiles = pendingFiles.filter(f => f.file.size > LARGE_FILE_THRESHOLD);
     const smallFiles = pendingFiles.filter(f => f.file.size <= LARGE_FILE_THRESHOLD);
 
-    // Processa arquivos pequenos em pares (2 por vez)
     for (let i = 0; i < smallFiles.length; i += 2) {
       const batch = smallFiles.slice(i, i + 2);
       await Promise.all(batch.map(processFile));
     }
 
-    // Processa arquivos grandes um por vez (precisam de banda total)
     for (const file of largeFiles) {
       await processFile(file);
     }
 
-    setBatchStatus('done');
+    setFileBatchStatus('done');
   }, [files, processFile]);
 
-  // Gera e baixa ZIP com todos os resultados
-  const downloadAllAsZip = useCallback(async () => {
+  const downloadAllFilesAsZip = useCallback(async () => {
     const zip = new JSZip();
     const completedFiles = files.filter(f => f.status === 'done' && f.result);
 
@@ -319,7 +456,6 @@ export default function Transcritor() {
     });
 
     const blob = await zip.generateAsync({ type: 'blob' });
-
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -330,23 +466,25 @@ export default function Transcritor() {
     URL.revokeObjectURL(url);
   }, [files]);
 
-  // Reset tudo
-  const handleReset = () => {
+  const handleFileReset = () => {
     setFiles([]);
-    setBatchStatus('idle');
+    setFileBatchStatus('idle');
     setError(null);
   };
 
   // Contadores
-  const pendingCount = files.filter(f => f.status === 'pending').length;
-  const processingCount = files.filter(f => f.status === 'uploading' || f.status === 'transcribing').length;
-  const doneCount = files.filter(f => f.status === 'done').length;
-  const errorCount = files.filter(f => f.status === 'error').length;
+  const filePendingCount = files.filter(f => f.status === 'pending').length;
+  const fileProcessingCount = files.filter(f => f.status === 'uploading' || f.status === 'transcribing').length;
+  const fileDoneCount = files.filter(f => f.status === 'done').length;
+  const fileErrorCount = files.filter(f => f.status === 'error').length;
 
-  const isProcessing = batchStatus === 'processing';
-  const hasFiles = files.length > 0;
-  const hasPendingFiles = pendingCount > 0;
-  const hasResults = doneCount > 0;
+  const urlPendingCount = urlItems.filter(i => i.status === 'pending').length;
+  const urlProcessingCount = urlItems.filter(i => ['extracting', 'transcribing', 'refining'].includes(i.status)).length;
+  const urlDoneCount = urlItems.filter(i => i.status === 'done').length;
+  const urlErrorCount = urlItems.filter(i => i.status === 'error').length;
+
+  const isFileProcessing = fileBatchStatus === 'processing';
+  const isUrlProcessing = urlBatchStatus === 'processing';
 
   return (
     <main className="min-h-screen p-4 md:p-8 flex items-center justify-center">
@@ -357,7 +495,7 @@ export default function Transcritor() {
             Transcritor <span className="text-[#C9A962]">Vídeo</span> → <span className="text-[#C9A962]">Texto</span>
           </h1>
           <p className="text-white/80 text-lg">
-            Transcreva múltiplos vídeos simultaneamente
+            Transcreva vídeos do Vimeo, YouTube ou arquivos locais
           </p>
         </div>
 
@@ -377,99 +515,323 @@ export default function Transcritor() {
         {/* Card Principal */}
         <div className="bg-white rounded-2xl shadow-2xl p-6 md:p-8 border border-[#C9A962]/20">
 
-          {/* Área de Upload */}
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Upload de Arquivos
-            </label>
-            <div
-              onDrop={handleDrop}
-              onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
-              onDragLeave={() => setDragActive(false)}
-              onClick={() => document.getElementById('fileInput')?.click()}
-              className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer
-                ${dragActive
-                  ? 'border-[#C9A962] bg-[#FDF8E8]'
-                  : 'border-gray-300 hover:border-[#C9A962] hover:bg-[#FDF8E8]/50'
-                }`}
+          {/* Tabs */}
+          <div className="flex border-b border-gray-200 mb-6">
+            <button
+              onClick={() => setActiveTab('url')}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-all ${
+                activeTab === 'url'
+                  ? 'border-[#C9A962] text-[#C9A962]'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
             >
-              <input
-                id="fileInput"
-                type="file"
-                multiple
-                accept=".mp4,.mov,.avi,.webm,.mp3,.wav,.m4a,video/*,audio/*"
-                className="hidden"
-                onChange={handleFileInput}
-                disabled={isProcessing}
-              />
-              <div className="text-4xl mb-2">📹</div>
-              <p className="text-gray-700 font-medium">
-                Arraste seus vídeos ou áudios aqui
-              </p>
-              <p className="text-gray-500 text-sm">
-                MP4, MOV, AVI, WEBM, MP3, WAV, M4A (até 500MB cada)
-              </p>
-              <p className="text-[#C9A962] text-sm mt-2 font-medium">
-                Selecione múltiplos arquivos de uma vez
-              </p>
-            </div>
+              🔗 URL Única
+            </button>
+            <button
+              onClick={() => setActiveTab('batch')}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-all ${
+                activeTab === 'batch'
+                  ? 'border-[#C9A962] text-[#C9A962]'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              📋 Múltiplas URLs
+            </button>
+            <button
+              onClick={() => setActiveTab('files')}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-all ${
+                activeTab === 'files'
+                  ? 'border-[#C9A962] text-[#C9A962]'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              📁 Arquivos Locais
+            </button>
           </div>
 
-          {/* Lista de Arquivos */}
-          {hasFiles && (
-            <div className="mb-6">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium text-gray-700">
-                  Arquivos ({files.length})
-                </h3>
-                {!isProcessing && (
+          {/* ==================== TAB: URL ÚNICA ==================== */}
+          {activeTab === 'url' && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  URL do Vídeo
+                </label>
+                <input
+                  type="url"
+                  value={singleUrl}
+                  onChange={(e) => setSingleUrl(e.target.value)}
+                  placeholder="https://gandramartins.adv.br/entrevistas/... ou https://vimeo.com/..."
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#C9A962] focus:border-transparent"
+                  disabled={singleUrlStatus === 'processing'}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Suporta: gandramartins.adv.br, vimeo.com, youtube.com
+                </p>
+              </div>
+
+              {singleUrlStatus === 'processing' && (
+                <div className="flex items-center gap-3 p-4 bg-blue-50 rounded-lg">
+                  <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-blue-700">{singleUrlProgress}</span>
+                </div>
+              )}
+
+              {singleUrlError && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
+                  {singleUrlError}
+                </div>
+              )}
+
+              {singleUrlResult && (
+                <div className="space-y-3">
+                  <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                    <p className="text-green-700 font-medium mb-2">Transcrição concluída!</p>
+                    <div className="max-h-64 overflow-y-auto bg-white p-3 rounded border text-sm text-gray-700 whitespace-pre-wrap">
+                      {singleUrlResult.substring(0, 2000)}
+                      {singleUrlResult.length > 2000 && '...'}
+                    </div>
+                  </div>
                   <button
-                    onClick={handleReset}
-                    className="text-sm text-red-500 hover:text-red-700"
+                    onClick={downloadSingleResult}
+                    className="w-full bg-green-600 hover:bg-green-700 text-white py-3 px-6 rounded-lg font-semibold transition-all"
                   >
-                    Limpar tudo
+                    📥 Baixar Transcrição (.txt)
                   </button>
+                </div>
+              )}
+
+              <button
+                onClick={processSingleUrl}
+                disabled={!singleUrl.trim() || singleUrlStatus === 'processing'}
+                className="w-full bg-[#C9A962] hover:bg-[#B89A52] disabled:bg-gray-300 text-white py-4 px-6 rounded-lg font-semibold text-lg transition-all"
+              >
+                {singleUrlStatus === 'processing' ? 'Processando...' : '🎯 Transcrever URL'}
+              </button>
+
+              {singleUrlStatus === 'done' && (
+                <button
+                  onClick={() => {
+                    setSingleUrl('');
+                    setSingleUrlResult(null);
+                    setSingleUrlStatus('idle');
+                  }}
+                  className="w-full px-6 py-3 border-2 border-[#8B2323] rounded-lg font-semibold text-[#5C1515] hover:bg-[#8B2323]/10 transition-all"
+                >
+                  Nova Transcrição
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* ==================== TAB: BATCH URLs ==================== */}
+          {activeTab === 'batch' && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Cole as URLs (uma por linha)
+                </label>
+                <textarea
+                  value={batchUrls}
+                  onChange={(e) => setBatchUrls(e.target.value)}
+                  placeholder="https://gandramartins.adv.br/entrevistas/entrevista-1/&#10;https://gandramartins.adv.br/entrevistas/entrevista-2/&#10;https://vimeo.com/123456789"
+                  rows={5}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#C9A962] focus:border-transparent font-mono text-sm"
+                  disabled={isUrlProcessing}
+                />
+                {urlCount > 0 && (
+                  <p className="text-sm text-[#C9A962] mt-1">
+                    {urlCount} URL{urlCount !== 1 ? 's' : ''} detectada{urlCount !== 1 ? 's' : ''}
+                  </p>
                 )}
               </div>
 
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {files.map(file => (
-                  <div
-                    key={file.id}
-                    className={`flex items-center gap-3 p-3 rounded-lg ${
-                      file.status === 'error' ? 'bg-red-50' : 'bg-gray-50'
-                    }`}
-                  >
-                    {/* Ícone de status */}
-                    <div className="w-6 flex-shrink-0">
-                      {file.status === 'pending' && <span className="text-gray-400">○</span>}
-                      {file.status === 'uploading' && (
-                        <div className="w-4 h-4 border-2 border-[#C9A962] border-t-transparent rounded-full animate-spin" />
-                      )}
-                      {file.status === 'transcribing' && (
-                        <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                      )}
-                      {file.status === 'done' && <span className="text-green-500">✓</span>}
-                      {file.status === 'error' && <span className="text-red-500">✕</span>}
+              {urlCount > 0 && urlItems.length === 0 && (
+                <button
+                  onClick={addUrlsToQueue}
+                  className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 px-6 rounded-lg font-medium transition-all"
+                >
+                  ➕ Adicionar à Fila
+                </button>
+              )}
+
+              {/* Lista de URLs */}
+              {urlItems.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <h3 className="text-sm font-medium text-gray-700">Fila ({urlItems.length})</h3>
+                    {!isUrlProcessing && (
+                      <button onClick={clearUrlItems} className="text-sm text-red-500 hover:text-red-700">
+                        Limpar
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {urlItems.map(item => (
+                      <div
+                        key={item.id}
+                        className={`flex items-center gap-3 p-3 rounded-lg ${
+                          item.status === 'error' ? 'bg-red-50' : 'bg-gray-50'
+                        }`}
+                      >
+                        <div className="w-6 flex-shrink-0">
+                          {item.status === 'pending' && <span className="text-gray-400">○</span>}
+                          {item.status === 'extracting' && (
+                            <div className="w-4 h-4 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                          )}
+                          {item.status === 'transcribing' && (
+                            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                          )}
+                          {item.status === 'refining' && (
+                            <div className="w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+                          )}
+                          {item.status === 'done' && <span className="text-green-500">✓</span>}
+                          {item.status === 'error' && <span className="text-red-500">✕</span>}
+                        </div>
+
+                        <span className="flex-1 truncate text-sm text-gray-700" title={item.url}>
+                          {item.title}
+                        </span>
+
+                        <div className="flex-shrink-0">
+                          {item.status === 'pending' && <span className="text-xs text-gray-400">Aguardando</span>}
+                          {item.status === 'extracting' && <span className="text-xs text-orange-500">Extraindo...</span>}
+                          {item.status === 'transcribing' && <span className="text-xs text-blue-500">Transcrevendo...</span>}
+                          {item.status === 'refining' && <span className="text-xs text-purple-500">Refinando...</span>}
+                          {item.status === 'done' && <span className="text-xs text-green-500">Concluído</span>}
+                          {item.status === 'error' && <span className="text-xs text-red-500" title={item.error}>Erro</span>}
+                        </div>
+
+                        {!isUrlProcessing && item.status !== 'extracting' && item.status !== 'transcribing' && item.status !== 'refining' && (
+                          <button
+                            onClick={() => removeUrlItem(item.id)}
+                            className="text-gray-400 hover:text-red-500 flex-shrink-0"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Resumo */}
+                  {(isUrlProcessing || urlBatchStatus === 'done') && (
+                    <div className="flex gap-4 text-xs">
+                      {urlProcessingCount > 0 && <span className="text-blue-500">Processando: {urlProcessingCount}</span>}
+                      {urlDoneCount > 0 && <span className="text-green-500">Concluídos: {urlDoneCount}</span>}
+                      {urlErrorCount > 0 && <span className="text-red-500">Erros: {urlErrorCount}</span>}
+                      {urlPendingCount > 0 && isUrlProcessing && <span className="text-gray-400">Na fila: {urlPendingCount}</span>}
                     </div>
+                  )}
+                </div>
+              )}
 
-                    {/* Nome do arquivo */}
-                    <span className="flex-1 truncate text-sm text-gray-700" title={file.fileName}>
-                      {file.fileName}
-                    </span>
+              {/* Botões de Ação */}
+              {urlItems.length > 0 && urlPendingCount > 0 && !isUrlProcessing && (
+                <button
+                  onClick={processUrlBatch}
+                  className="w-full bg-[#C9A962] hover:bg-[#B89A52] text-white py-4 px-6 rounded-lg font-semibold text-lg transition-all"
+                >
+                  🎯 Processar {urlPendingCount} URL{urlPendingCount !== 1 ? 's' : ''}
+                </button>
+              )}
 
-                    {/* Status/Progresso */}
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {file.status === 'pending' && (
-                        <span className="text-xs text-gray-400">Aguardando</span>
-                      )}
+              {isUrlProcessing && (
+                <div className="flex items-center justify-center gap-3 py-4">
+                  <div className="w-6 h-6 border-3 border-[#C9A962] border-t-transparent rounded-full animate-spin" />
+                  <span className="text-gray-600">Processando URLs...</span>
+                </div>
+              )}
 
-                      {file.status === 'uploading' && (
-                        <div className="flex items-center gap-2">
-                          {file.uploadProgress === 0 ? (
-                            <span className="text-xs text-orange-500 animate-pulse">Preparando...</span>
-                          ) : (
-                            <>
+              {urlBatchStatus === 'done' && urlDoneCount > 0 && (
+                <button
+                  onClick={downloadUrlResults}
+                  className="w-full bg-green-600 hover:bg-green-700 text-white py-4 px-6 rounded-lg font-semibold text-lg transition-all"
+                >
+                  📦 Baixar Transcrições (ZIP)
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* ==================== TAB: ARQUIVOS ==================== */}
+          {activeTab === 'files' && (
+            <div className="space-y-4">
+              {/* Área de Upload */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Upload de Arquivos
+                </label>
+                <div
+                  onDrop={handleDrop}
+                  onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+                  onDragLeave={() => setDragActive(false)}
+                  onClick={() => document.getElementById('fileInput')?.click()}
+                  className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer
+                    ${dragActive
+                      ? 'border-[#C9A962] bg-[#FDF8E8]'
+                      : 'border-gray-300 hover:border-[#C9A962] hover:bg-[#FDF8E8]/50'
+                    }`}
+                >
+                  <input
+                    id="fileInput"
+                    type="file"
+                    multiple
+                    accept=".mp4,.mov,.avi,.webm,.mp3,.wav,.m4a,video/*,audio/*"
+                    className="hidden"
+                    onChange={handleFileInput}
+                    disabled={isFileProcessing}
+                  />
+                  <div className="text-4xl mb-2">📹</div>
+                  <p className="text-gray-700 font-medium">
+                    Arraste seus vídeos ou áudios aqui
+                  </p>
+                  <p className="text-gray-500 text-sm">
+                    MP4, MOV, AVI, WEBM, MP3, WAV, M4A (até 500MB cada)
+                  </p>
+                </div>
+              </div>
+
+              {/* Lista de Arquivos */}
+              {files.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <h3 className="text-sm font-medium text-gray-700">Arquivos ({files.length})</h3>
+                    {!isFileProcessing && (
+                      <button onClick={handleFileReset} className="text-sm text-red-500 hover:text-red-700">
+                        Limpar
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {files.map(file => (
+                      <div
+                        key={file.id}
+                        className={`flex items-center gap-3 p-3 rounded-lg ${
+                          file.status === 'error' ? 'bg-red-50' : 'bg-gray-50'
+                        }`}
+                      >
+                        <div className="w-6 flex-shrink-0">
+                          {file.status === 'pending' && <span className="text-gray-400">○</span>}
+                          {file.status === 'uploading' && (
+                            <div className="w-4 h-4 border-2 border-[#C9A962] border-t-transparent rounded-full animate-spin" />
+                          )}
+                          {file.status === 'transcribing' && (
+                            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                          )}
+                          {file.status === 'done' && <span className="text-green-500">✓</span>}
+                          {file.status === 'error' && <span className="text-red-500">✕</span>}
+                        </div>
+
+                        <span className="flex-1 truncate text-sm text-gray-700" title={file.fileName}>
+                          {file.fileName}
+                        </span>
+
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {file.status === 'pending' && <span className="text-xs text-gray-400">Aguardando</span>}
+                          {file.status === 'uploading' && (
+                            <div className="flex items-center gap-2">
                               <div className="w-16 bg-gray-200 rounded-full h-1.5">
                                 <div
                                   className="bg-[#C9A962] h-1.5 rounded-full transition-all duration-300"
@@ -477,137 +839,67 @@ export default function Transcritor() {
                                 />
                               </div>
                               <span className="text-xs text-gray-500 w-8">{file.uploadProgress}%</span>
-                            </>
+                            </div>
                           )}
+                          {file.status === 'transcribing' && <span className="text-xs text-blue-500">Transcrevendo...</span>}
+                          {file.status === 'done' && <span className="text-xs text-green-500">Concluído</span>}
+                          {file.status === 'error' && <span className="text-xs text-red-500" title={file.error}>Erro</span>}
                         </div>
-                      )}
 
-                      {file.status === 'transcribing' && (
-                        <span className="text-xs text-blue-500">Transcrevendo...</span>
-                      )}
-
-                      {file.status === 'done' && (
-                        <span className="text-xs text-green-500">Concluído</span>
-                      )}
-
-                      {file.status === 'error' && (
-                        <span className="text-xs text-red-500" title={file.error}>Erro</span>
-                      )}
-                    </div>
-
-                    {/* Botão retry para arquivos com erro */}
-                    {!isProcessing && file.status === 'error' && (
-                      <button
-                        onClick={() => retryFile(file)}
-                        className="text-xs px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded flex-shrink-0"
-                        title="Tentar novamente"
-                      >
-                        Retry
-                      </button>
-                    )}
-
-                    {/* Botão remover */}
-                    {!isProcessing && file.status !== 'uploading' && file.status !== 'transcribing' && (
-                      <button
-                        onClick={() => removeFile(file.id)}
-                        className="text-gray-400 hover:text-red-500 flex-shrink-0"
-                      >
-                        ✕
-                      </button>
-                    )}
+                        {!isFileProcessing && file.status !== 'uploading' && file.status !== 'transcribing' && (
+                          <button
+                            onClick={() => removeFile(file.id)}
+                            className="text-gray-400 hover:text-red-500 flex-shrink-0"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
 
-              {/* Resumo */}
-              {(isProcessing || batchStatus === 'done') && (
-                <div className="mt-3 flex gap-4 text-xs">
-                  {processingCount > 0 && (
-                    <span className="text-blue-500">Processando: {processingCount}</span>
-                  )}
-                  {doneCount > 0 && (
-                    <span className="text-green-500">Concluídos: {doneCount}</span>
-                  )}
-                  {errorCount > 0 && (
-                    <span className="text-red-500">Erros: {errorCount}</span>
-                  )}
-                  {pendingCount > 0 && isProcessing && (
-                    <span className="text-gray-400">Na fila: {pendingCount}</span>
+                  {/* Resumo */}
+                  {(isFileProcessing || fileBatchStatus === 'done') && (
+                    <div className="flex gap-4 text-xs">
+                      {fileProcessingCount > 0 && <span className="text-blue-500">Processando: {fileProcessingCount}</span>}
+                      {fileDoneCount > 0 && <span className="text-green-500">Concluídos: {fileDoneCount}</span>}
+                      {fileErrorCount > 0 && <span className="text-red-500">Erros: {fileErrorCount}</span>}
+                    </div>
                   )}
                 </div>
               )}
-            </div>
-          )}
 
-          {/* Erro geral */}
-          {error && (
-            <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-sm">
-              {error}
-            </div>
-          )}
+              {error && (
+                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-sm">
+                  {error}
+                </div>
+              )}
 
-          {/* Botões de Ação */}
-          <div className="space-y-3">
-            {/* Botão Iniciar */}
-            {hasPendingFiles && !isProcessing && (
-              <button
-                onClick={processAllFiles}
-                className="w-full bg-[#C9A962] hover:bg-[#B89A52] text-white py-4 px-6 rounded-lg font-semibold text-lg transition-all flex items-center justify-center gap-2 shadow-lg"
-              >
-                🎯 Iniciar Transcrição ({pendingCount} {pendingCount === 1 ? 'arquivo' : 'arquivos'})
-              </button>
-            )}
+              {/* Botões de Ação */}
+              {filePendingCount > 0 && !isFileProcessing && (
+                <button
+                  onClick={processAllFiles}
+                  className="w-full bg-[#C9A962] hover:bg-[#B89A52] text-white py-4 px-6 rounded-lg font-semibold text-lg transition-all"
+                >
+                  🎯 Transcrever {filePendingCount} arquivo{filePendingCount !== 1 ? 's' : ''}
+                </button>
+              )}
 
-            {/* Indicador de Processamento */}
-            {isProcessing && (
-              <div className="flex items-center justify-center gap-3 py-4">
-                <div className="w-6 h-6 border-3 border-[#C9A962] border-t-transparent rounded-full animate-spin" />
-                <span className="text-gray-600">Processando transcrições...</span>
-              </div>
-            )}
+              {isFileProcessing && (
+                <div className="flex items-center justify-center gap-3 py-4">
+                  <div className="w-6 h-6 border-3 border-[#C9A962] border-t-transparent rounded-full animate-spin" />
+                  <span className="text-gray-600">Processando arquivos...</span>
+                </div>
+              )}
 
-            {/* Botão Reprocessar Erros */}
-            {!isProcessing && errorCount > 0 && (
-              <button
-                onClick={async () => {
-                  setBatchStatus('processing');
-                  const errorFiles = files.filter(f => f.status === 'error');
-                  for (const file of errorFiles) {
-                    await retryFile(file);
-                  }
-                  setBatchStatus('done');
-                }}
-                className="w-full bg-orange-500 hover:bg-orange-600 text-white py-3 px-6 rounded-lg font-semibold transition-all flex items-center justify-center gap-2"
-              >
-                🔄 Reprocessar {errorCount} {errorCount === 1 ? 'arquivo com erro' : 'arquivos com erro'}
-              </button>
-            )}
-
-            {/* Botão Download ZIP */}
-            {batchStatus === 'done' && hasResults && (
-              <button
-                onClick={downloadAllAsZip}
-                className="w-full bg-green-600 hover:bg-green-700 text-white py-4 px-6 rounded-lg font-semibold text-lg transition-all flex items-center justify-center gap-2 shadow-lg"
-              >
-                📦 Baixar Todas as Transcrições (ZIP)
-              </button>
-            )}
-
-            {/* Botão Nova Transcrição */}
-            {batchStatus === 'done' && (
-              <button
-                onClick={handleReset}
-                className="w-full px-6 py-3 border-2 border-[#8B2323] rounded-lg font-semibold text-[#5C1515] hover:bg-[#8B2323]/10 transition-all"
-              >
-                Nova Transcrição
-              </button>
-            )}
-          </div>
-
-          {/* Instruções quando vazio */}
-          {!hasFiles && (
-            <div className="text-center text-gray-500 text-sm mt-4">
-              Selecione um ou mais arquivos de vídeo/áudio para começar
+              {fileBatchStatus === 'done' && fileDoneCount > 0 && (
+                <button
+                  onClick={downloadAllFilesAsZip}
+                  className="w-full bg-green-600 hover:bg-green-700 text-white py-4 px-6 rounded-lg font-semibold text-lg transition-all"
+                >
+                  📦 Baixar Transcrições (ZIP)
+                </button>
+              )}
             </div>
           )}
         </div>

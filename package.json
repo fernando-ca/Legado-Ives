@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
     "@deepgram/sdk": "^4.11.2",
     "@vercel/blob": "^2.0.0",
     "file-saver": "^2.0.5",
