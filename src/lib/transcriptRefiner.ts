@@ -34,58 +34,68 @@ export async function refineTranscript(
     transcript = transcript.substring(0, maxLength) + '\n\n[... transcrição truncada por exceder limite ...]';
   }
 
-  const prompt = `Você é um revisor especializado em transcrições de entrevistas jurídicas brasileiras.
+  // Limpa o título se for um nome de arquivo
+  const cleanTitle = metadata.title
+    .replace(/\.(mp4|mp3|wav|m4a|webm|ogg|mov|avi|mkv)$/i, '')
+    .replace(/[-_]/g, ' ')
+    .trim() || 'Transcrição';
 
-TAREFA: Revise e formate a transcrição bruta abaixo, criando um documento legível e profissional.
+  // Define identificador do falante principal
+  const speakerName = metadata.guest?.split(' ')[0]?.toUpperCase() || 'ENTREVISTADO';
 
-REGRAS IMPORTANTES:
-1. CORRIJA erros de português, pontuação e termos jurídicos (ex: "habias corpus" → "habeas corpus")
-2. IDENTIFIQUE os falantes e separe suas falas em blocos com [NOME]
-3. Use [APRESENTADOR] ou [ENTREVISTADOR] para quem faz perguntas
-4. Use o nome do convidado (se fornecido) ou [ENTREVISTADO] para as respostas
-5. REMOVA hesitações excessivas ("é...", "né", "então...", "aí...", repetições)
-6. MANTENHA o conteúdo e significado original - apenas corrija e formate
-7. PRESERVE informações importantes como nomes, datas, leis, artigos
-8. Se houver mais de 2 pessoas, identifique cada uma
-9. Adicione parágrafos para melhorar a legibilidade das falas longas
+  const systemPrompt = `Você é um revisor profissional especializado em transcrições de entrevistas e palestras em português brasileiro. Sua tarefa é transformar transcrições brutas em documentos bem formatados e legíveis.
 
-FORMATO DE SAÍDA (use exatamente este formato):
+REGRAS OBRIGATÓRIAS:
+1. SEMPRE comece com o cabeçalho formatado (linhas de ═)
+2. SEMPRE identifique e separe os falantes usando colchetes: [APRESENTADOR], [${speakerName}], etc.
+3. Corrija erros de português, pontuação e termos técnicos/jurídicos
+4. Remova hesitações excessivas ("é...", "né", "então...", "aí...", repetições)
+5. Mantenha o conteúdo original - apenas corrija e formate
+6. Divida falas longas em parágrafos para melhor legibilidade
+7. Se houver múltiplos falantes, identifique cada um de forma consistente
+
+FORMATO OBRIGATÓRIO - Sua resposta deve seguir EXATAMENTE este formato:
+
 ═══════════════════════════════════════════════════════════════════════════════
-${metadata.title.toUpperCase()}
-${metadata.date || 'Data não especificada'}
-${metadata.guest ? `Convidado: ${metadata.guest}` : ''}
+TÍTULO DA TRANSCRIÇÃO
+Data (se disponível)
+Convidado: Nome (se disponível)
 ═══════════════════════════════════════════════════════════════════════════════
 
-[APRESENTADOR]
-Texto da fala do apresentador aqui, com parágrafos quando necessário.
+[APRESENTADOR/ENTREVISTADOR]
+Texto da primeira fala aqui.
 
-Continuação da fala se for longa.
+[NOME DO ENTREVISTADO]
+Resposta do entrevistado aqui.
 
-[${metadata.guest?.split(' ')[0]?.toUpperCase() || 'ENTREVISTADO'}]
-Texto da resposta do entrevistado aqui.
+Continuação da fala em novo parágrafo se necessário.
 
----
+[APRESENTADOR/ENTREVISTADOR]
+Próxima pergunta ou intervenção.
 
-TRANSCRIÇÃO BRUTA PARA REFINAR:
-${transcript}
+... e assim por diante até o final da transcrição.
 
----
+IMPORTANTE: Responda APENAS com a transcrição formatada. Não adicione explicações, comentários ou notas antes ou depois.`;
+
+  const userPrompt = `Formate esta transcrição seguindo o padrão especificado:
 
 METADADOS:
-- Título: ${metadata.title}
+- Título: ${cleanTitle}
 - Data: ${metadata.date || 'Não especificada'}
 - Convidado: ${metadata.guest || 'Não especificado'}
 
-Agora, forneça a transcrição refinada e formatada:`;
+TRANSCRIÇÃO BRUTA:
+${transcript}`;
 
   try {
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 16000,
+      system: systemPrompt,
       messages: [
         {
           role: 'user',
-          content: prompt,
+          content: userPrompt,
         },
       ],
     });
@@ -128,8 +138,14 @@ export function formatTranscriptBasic(
   rawTranscript: string,
   metadata: TranscriptMetadata
 ): string {
+  // Limpa o título se for um nome de arquivo
+  const cleanTitle = metadata.title
+    .replace(/\.(mp4|mp3|wav|m4a|webm|ogg|mov|avi|mkv)$/i, '')
+    .replace(/[-_]/g, ' ')
+    .trim() || 'Transcrição';
+
   const header = `═══════════════════════════════════════════════════════════════════════════════
-${metadata.title.toUpperCase()}
+${cleanTitle.toUpperCase()}
 ${metadata.date || 'Data não especificada'}
 ${metadata.guest ? `Convidado: ${metadata.guest}` : ''}
 ═══════════════════════════════════════════════════════════════════════════════
