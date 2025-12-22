@@ -1,21 +1,30 @@
 // src/lib/vimeoExtractor.ts
-// Extração de áudio do Vimeo usando Cobalt API
+// Extração de vídeo/áudio do Vimeo usando Player Config API direta
 
-// Instâncias Cobalt públicas (fallbacks) - atualizado em 2024-12
-// Fonte: https://instances.cobalt.best/
-const COBALT_INSTANCES = [
-  'https://cobalt-backend.canine.tools',  // Score 96%
-  'https://cobalt-api.meowing.de',         // Score 92%
-  'https://kityune.imput.net',             // Score 76%
-  'https://blossom.imput.net',             // Score 76%
-  'https://capi.3kh0.net',                 // Score 76%
-];
+interface VimeoProgressiveFile {
+  url: string;
+  quality: string;
+  width: number;
+  height: number;
+  mime: string;
+}
 
-interface CobaltResponse {
-  status: 'tunnel' | 'redirect' | 'picker' | 'error';
-  url?: string;
-  filename?: string;
-  error?: string;
+interface VimeoConfigResponse {
+  request?: {
+    files?: {
+      progressive?: VimeoProgressiveFile[];
+      hls?: {
+        cdns?: {
+          [key: string]: {
+            url?: string;
+          };
+        };
+      };
+    };
+  };
+  video?: {
+    title?: string;
+  };
 }
 
 /**
@@ -65,8 +74,8 @@ export async function extractVimeoIdFromPage(pageUrl: string): Promise<string> {
   try {
     const response = await fetch(pageUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
       signal: controller.signal,
     });
@@ -125,8 +134,8 @@ export async function extractMetadataFromPage(pageUrl: string): Promise<{
   try {
     const response = await fetch(pageUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
       signal: controller.signal,
     });
@@ -196,81 +205,183 @@ export async function extractMetadataFromPage(pageUrl: string): Promise<{
 }
 
 /**
- * Extrai URL do áudio de um vídeo Vimeo usando Cobalt API
+ * Extrai URL do vídeo diretamente do Vimeo Player Config API
+ * Fonte: https://jakeroid.com/blog/how-to-download-vimeo-video-using-javascript
  */
-export async function extractAudioFromVimeo(vimeoId: string): Promise<string> {
-  const vimeoUrl = `https://vimeo.com/${vimeoId}`;
-  console.log(`Extraindo áudio do Vimeo: ${vimeoUrl}`);
+export async function extractVideoFromVimeo(vimeoId: string, refererUrl?: string): Promise<string> {
+  console.log(`Extraindo vídeo do Vimeo: ${vimeoId}`);
 
-  const errors: string[] = [];
+  const configUrl = `https://player.vimeo.com/video/${vimeoId}/config`;
 
-  for (const instance of COBALT_INSTANCES) {
-    try {
-      console.log(`Tentando instância Cobalt: ${instance}`);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
+  try {
+    // Headers necessários para o Vimeo aceitar a requisição
+    const headers: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'application/json, text/javascript, */*; q=0.01',
+      'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Origin': 'https://player.vimeo.com',
+    };
 
-      const response = await fetch(`${instance}/`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          url: vimeoUrl,
-          downloadMode: 'audio',
-          audioFormat: 'mp3',
-        }),
-        signal: controller.signal,
-      });
+    // Se temos uma URL de referer (ex: gandramartins.adv.br), incluir
+    if (refererUrl) {
+      headers['Referer'] = refererUrl;
+    }
 
-      clearTimeout(timeoutId);
+    console.log(`Buscando config: ${configUrl}`);
 
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => '');
-        errors.push(`${instance}: HTTP ${response.status} - ${errorText}`);
-        continue;
-      }
+    const response = await fetch(configUrl, {
+      headers,
+      signal: controller.signal,
+    });
 
-      const data: CobaltResponse = await response.json();
+    clearTimeout(timeoutId);
 
-      if (data.status === 'error') {
-        errors.push(`${instance}: ${data.error || 'Erro desconhecido'}`);
-        continue;
-      }
+    if (!response.ok) {
+      // Se o config direto não funcionar, tentar via página do player
+      console.log(`Config direto falhou (${response.status}), tentando via página do player...`);
+      return await extractVideoFromVimeoPage(vimeoId, refererUrl);
+    }
 
-      if (data.status === 'tunnel' || data.status === 'redirect') {
-        if (data.url) {
-          console.log(`URL do áudio obtida via ${instance}`);
-          return data.url;
+    const config: VimeoConfigResponse = await response.json();
+
+    // Tentar extrair URL progressiva (download direto)
+    const progressive = config.request?.files?.progressive;
+    if (progressive && progressive.length > 0) {
+      // Ordenar por qualidade (menor primeiro - economiza banda para áudio)
+      const sorted = [...progressive].sort((a, b) => (a.height || 0) - (b.height || 0));
+      const selected = sorted[0];
+      console.log(`URL progressiva encontrada: ${selected.quality} (${selected.width}x${selected.height})`);
+      return selected.url;
+    }
+
+    // Tentar HLS como fallback
+    const hls = config.request?.files?.hls;
+    if (hls?.cdns) {
+      const cdnKeys = Object.keys(hls.cdns);
+      for (const cdn of cdnKeys) {
+        const hlsUrl = hls.cdns[cdn]?.url;
+        if (hlsUrl) {
+          console.log(`URL HLS encontrada via CDN ${cdn}`);
+          return hlsUrl;
         }
       }
+    }
 
-      if (data.status === 'picker') {
-        errors.push(`${instance}: Múltiplos itens disponíveis (picker não suportado)`);
-        continue;
+    throw new Error('Nenhuma URL de vídeo encontrada no config do Vimeo');
+
+  } catch (error) {
+    clearTimeout(timeoutId);
+
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        throw new Error('Timeout ao acessar Vimeo config');
       }
-
-      errors.push(`${instance}: Resposta inesperada: ${JSON.stringify(data)}`);
-
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Erro desconhecido';
-      if (msg.includes('abort')) {
-        errors.push(`${instance}: Timeout`);
-      } else {
-        errors.push(`${instance}: ${msg}`);
+      // Se falhou, tentar método alternativo
+      if (!error.message.includes('Nenhuma URL')) {
+        console.log(`Erro no config direto: ${error.message}, tentando método alternativo...`);
+        return await extractVideoFromVimeoPage(vimeoId, refererUrl);
       }
     }
-  }
 
-  console.error('Todas as instâncias Cobalt falharam:', errors);
-  throw new Error(`Não foi possível extrair áudio do Vimeo. Erros: ${errors.join('; ')}`);
+    throw error;
+  }
 }
 
 /**
- * Função principal: extrai áudio de uma URL (Vimeo direto ou página gandramartins)
- * Retorna a URL do áudio e os metadados
+ * Método alternativo: extrai config do HTML da página do player
+ */
+async function extractVideoFromVimeoPage(vimeoId: string, refererUrl?: string): Promise<string> {
+  console.log(`Tentando extrair via página do player: ${vimeoId}`);
+
+  const playerUrl = `https://player.vimeo.com/video/${vimeoId}`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    const headers: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+    };
+
+    if (refererUrl) {
+      headers['Referer'] = refererUrl;
+    }
+
+    const response = await fetch(playerUrl, {
+      headers,
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Erro ao acessar player Vimeo: HTTP ${response.status}`);
+    }
+
+    const html = await response.text();
+
+    // Procurar config no HTML (window.playerConfig ou similar)
+    const configPatterns = [
+      /window\.playerConfig\s*=\s*(\{[\s\S]+?\});/,
+      /var\s+config\s*=\s*(\{[\s\S]+?\});/,
+      /"progressive"\s*:\s*\[([^\]]+)\]/,
+    ];
+
+    for (const pattern of configPatterns) {
+      const match = html.match(pattern);
+      if (match) {
+        try {
+          // Para o padrão progressive direto
+          if (pattern.source.includes('progressive')) {
+            const progressiveMatch = html.match(/"url"\s*:\s*"([^"]+)"/);
+            if (progressiveMatch) {
+              console.log('URL encontrada via regex progressive');
+              return progressiveMatch[1].replace(/\\/g, '');
+            }
+          } else {
+            const config = JSON.parse(match[1]);
+            const progressive = config.request?.files?.progressive;
+            if (progressive && progressive.length > 0) {
+              const sorted = [...progressive].sort((a: VimeoProgressiveFile, b: VimeoProgressiveFile) =>
+                (a.height || 0) - (b.height || 0)
+              );
+              console.log('URL encontrada via config no HTML');
+              return sorted[0].url;
+            }
+          }
+        } catch (parseError) {
+          console.log('Erro ao parsear config:', parseError);
+          continue;
+        }
+      }
+    }
+
+    // Última tentativa: procurar URLs MP4 diretamente
+    const mp4Match = html.match(/https?:\/\/[^"'\s]+\.mp4[^"'\s]*/);
+    if (mp4Match) {
+      console.log('URL MP4 encontrada via regex direto');
+      return mp4Match[0];
+    }
+
+    throw new Error('Não foi possível extrair URL do vídeo. O vídeo pode ser privado ou protegido.');
+
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Timeout ao acessar página do player Vimeo');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Função principal: extrai vídeo de uma URL (Vimeo direto ou página gandramartins)
+ * Retorna a URL do vídeo e os metadados
  */
 export async function extractAudioFromUrl(url: string): Promise<{
   audioUrl: string;
@@ -282,6 +393,7 @@ export async function extractAudioFromUrl(url: string): Promise<{
 }> {
   let vimeoId: string;
   let metadata = { title: 'Entrevista', date: '', guest: '' };
+  let refererUrl: string | undefined;
 
   if (isVimeoUrl(url)) {
     // URL direta do Vimeo
@@ -296,12 +408,14 @@ export async function extractAudioFromUrl(url: string): Promise<{
     // Página do gandramartins.adv.br
     vimeoId = await extractVimeoIdFromPage(url);
     metadata = await extractMetadataFromPage(url);
+    refererUrl = url; // Usar a página original como referer
 
   } else {
     throw new Error('URL não suportada. Use URLs do Vimeo ou do site gandramartins.adv.br');
   }
 
-  const audioUrl = await extractAudioFromVimeo(vimeoId);
+  // Extrair URL do vídeo (será processado pelo Deepgram que aceita vídeo também)
+  const audioUrl = await extractVideoFromVimeo(vimeoId, refererUrl);
 
   return { audioUrl, metadata };
 }
