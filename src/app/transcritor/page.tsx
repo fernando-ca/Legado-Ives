@@ -24,12 +24,11 @@ interface BatchFile {
   id: string;
   file: File;
   fileName: string;
-  status: 'pending' | 'uploading' | 'transcribing' | 'done' | 'error';
+  status: 'pending' | 'uploading' | 'transcribing' | 'refining' | 'done' | 'error';
   uploadProgress: number;
   blobUrl?: string;
   result?: {
     transcript: string;
-    srt: string;
   };
   error?: string;
 }
@@ -406,9 +405,38 @@ export default function Transcritor() {
         throw lastError || new Error('Falha na transcrição');
       }
 
+      // 3. Refinar com Claude
+      updateFileStatus(id, { status: 'refining' });
+
+      let refinedTranscript = data.transcript;
+
+      try {
+        const refineResponse = await withTimeout(
+          fetch('/api/refine', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              transcript: data.transcript,
+              title: batchFile.fileName,
+              date: '',
+              guest: '',
+            }),
+          }),
+          120000,
+          'Timeout no refinamento'
+        );
+
+        if (refineResponse.ok) {
+          const refineData = await refineResponse.json();
+          refinedTranscript = refineData.refined || data.transcript;
+        }
+      } catch (refineError) {
+        console.warn('Refinamento falhou, usando transcrição bruta:', refineError);
+      }
+
       updateFileStatus(id, {
         status: 'done',
-        result: { transcript: data.transcript, srt: data.srt }
+        result: { transcript: refinedTranscript }
       });
 
       await fetch('/api/upload', {
@@ -452,7 +480,6 @@ export default function Transcritor() {
 
     completedFiles.forEach(({ fileName, result }) => {
       zip.file(`${fileName}.txt`, result!.transcript);
-      zip.file(`${fileName}.srt`, result!.srt);
     });
 
     const blob = await zip.generateAsync({ type: 'blob' });
@@ -474,7 +501,7 @@ export default function Transcritor() {
 
   // Contadores
   const filePendingCount = files.filter(f => f.status === 'pending').length;
-  const fileProcessingCount = files.filter(f => f.status === 'uploading' || f.status === 'transcribing').length;
+  const fileProcessingCount = files.filter(f => ['uploading', 'transcribing', 'refining'].includes(f.status)).length;
   const fileDoneCount = files.filter(f => f.status === 'done').length;
   const fileErrorCount = files.filter(f => f.status === 'error').length;
 
@@ -820,6 +847,9 @@ export default function Transcritor() {
                           {file.status === 'transcribing' && (
                             <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
                           )}
+                          {file.status === 'refining' && (
+                            <div className="w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+                          )}
                           {file.status === 'done' && <span className="text-green-500">✓</span>}
                           {file.status === 'error' && <span className="text-red-500">✕</span>}
                         </div>
@@ -842,11 +872,12 @@ export default function Transcritor() {
                             </div>
                           )}
                           {file.status === 'transcribing' && <span className="text-xs text-blue-500">Transcrevendo...</span>}
+                          {file.status === 'refining' && <span className="text-xs text-purple-500">Refinando com IA...</span>}
                           {file.status === 'done' && <span className="text-xs text-green-500">Concluído</span>}
                           {file.status === 'error' && <span className="text-xs text-red-500" title={file.error}>Erro</span>}
                         </div>
 
-                        {!isFileProcessing && file.status !== 'uploading' && file.status !== 'transcribing' && (
+                        {!isFileProcessing && !['uploading', 'transcribing', 'refining'].includes(file.status) && (
                           <button
                             onClick={() => removeFile(file.id)}
                             className="text-gray-400 hover:text-red-500 flex-shrink-0"
