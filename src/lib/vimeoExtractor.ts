@@ -1,11 +1,14 @@
 // src/lib/vimeoExtractor.ts
 // Extração de áudio do Vimeo usando Cobalt API
 
-// Instâncias Cobalt públicas (fallbacks)
+// Instâncias Cobalt públicas (fallbacks) - atualizado em 2024-12
+// Fonte: https://instances.cobalt.best/
 const COBALT_INSTANCES = [
-  'https://api.cobalt.tools',
-  'https://cobalt-api.kwiatekmiki.com',
-  'https://cobalt.canine.tools',
+  'https://cobalt-backend.canine.tools',  // Score 96%
+  'https://cobalt-api.meowing.de',         // Score 92%
+  'https://kityune.imput.net',             // Score 76%
+  'https://blossom.imput.net',             // Score 76%
+  'https://capi.3kh0.net',                 // Score 76%
 ];
 
 interface CobaltResponse {
